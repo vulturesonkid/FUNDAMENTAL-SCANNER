@@ -7,11 +7,8 @@ export default function App() {
   const handleScan = async (file) => {
     if (!file) return;
     setScanning(true);
-
-    // Laser animation 2.5s
     await new Promise(r => setTimeout(r, 2500));
 
-    // ANTI-REPAINT: same image = same result, no repaint
     const hash = file.name + '-' + file.size;
     const cached = localStorage.getItem('scan_' + hash);
     if (cached) {
@@ -20,7 +17,6 @@ export default function App() {
       return;
     }
 
-    // VISION PLUGIN: reads REAL price from image
     const form = new FormData();
     form.append('chart', file);
     const visionRes = await fetch('/api/vision', { method: 'POST', body: form });
@@ -32,7 +28,6 @@ export default function App() {
       return;
     }
 
-    // PATTERN PLUGIN: hidden brain (not on dashboard)
     const patternRes = await fetch('/api/pattern', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -40,36 +35,29 @@ export default function App() {
     });
     const pattern = await patternRes.json();
 
-    // HOLD if market tight - stored 24h in positions tab
     if (pattern.type === 'HOLD') {
       const hold = { pair: 'XAU/USD', type: 'HOLD', note: 'Market tight - HOLD', expiresAt: Date.now() + 86400000 };
-      const positions = JSON.parse(localStorage.getItem('fx_positions') || '[]');
-      localStorage.setItem('fx_positions', JSON.stringify([...positions, hold]));
       setResult(hold);
       setScanning(false);
       return;
     }
 
-    // Save 24h vault
-    const pos = {...pattern, createdAt: Date.now(), expiresAt: Date.now() + 86400000 };
-    const positions = JSON.parse(localStorage.getItem('fx_positions') || '[]').filter(p => Date.now() < p.expiresAt);
-    localStorage.setItem('fx_positions', JSON.stringify([...positions, pos]));
     localStorage.setItem('scan_' + hash, JSON.stringify(pattern));
-
     setResult(pattern);
     setScanning(false);
   };
 
   return (
-    <div className="card" style={{ padding: '20px', maxWidth: '600px', margin: '50px auto' }}>
-      <h2>SAMUEL FX PRO - SCANNER</h2>
+    <div className="card">
+      <h2 style={{ margin: 0, color: '#00ff88' }}>SAMUEL FX PRO - SCANNER</h2>
+      <p style={{ opacity: 0.7, fontSize: '13px' }}>Upload chart to scan</p>
       <input type="file" accept="image/*" onChange={e => handleScan(e.target.files[0])} />
-      {scanning && <div style={{ height: '3px', background: '#00ff88', marginTop: '10px', boxShadow: '0 0 10px #00ff88' }}>Scanning...</div>}
+      {scanning && <div style={{ height: '3px', background: '#00ff88', marginTop: '15px', boxShadow: '0 0 15px #00ff88', animation: 'scanMove 2.5s linear infinite' }}></div>}
       {result &&!result.error && (
-        <div style={{ marginTop: '20px' }}>
-          <div>{result.pattern} • {result.type}</div>
-          <div>Entry: {result.entry}</div>
-          <div>SL: {result.sl} TP: {result.tp}</div>
+        <div style={{ marginTop: '20px', background: 'rgba(0,255,136,0.1)', padding: '15px', borderRadius: '10px' }}>
+          <div style={{ fontWeight: 'bold' }}>{result.pattern} • {result.type}</div>
+          <div style={{ marginTop: '8px' }}>Entry: {result.entry} | SL: {result.sl} | TP: {result.tp}</div>
+          {result.winRate && <div style={{ marginTop: '5px', color: '#00ff88' }}>{result.winRate}% • BULLISH</div>}
         </div>
       )}
       {result?.error && <div style={{ color: '#ff6b6b', marginTop: '20px' }}>{result.error}</div>}
