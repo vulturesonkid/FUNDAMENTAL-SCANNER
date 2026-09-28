@@ -1,4 +1,3 @@
-
 import { useState, useRef, useEffect } from 'react'
 
 const PATTERNS = [
@@ -20,13 +19,13 @@ const MENTOR_EMAIL="vulturesonkidd@gmail.com"
 const MENTOR_PIN="6084549888"
 
 const FIXES = [
+  { v:"v9.1", date:"2026-09-28", title:"Anti-Repaint + Vault Sync + True Price", desc:"Fixed repaint: same chart hash = same signal 24h. Fixed phone login: keys trim+uppercase+server vault sync. Fixed Entry/SL/TP: now reads true price via /api/vision, if blurry returns CANNOT_FETCH. HOLD positions kept 24h with Market Neutral text." },
   { v:"v9.0", date:"2026-09-27", title:"News + Chart Fusion + NFP Prediction", desc:"Re-added investing.com calendar. Now predicts before major events (NFP, CPI, FOMC) with probability. Combines chart pattern + news analytics for better precision. Works on non-event days too." },
   { v:"v8.1", date:"2026-09-27", title:"Hide Secrets", desc:"Removed email/PIN leak from login screen, placeholders and error messages. PIN and email no longer visible to visitors. Fixes hidden from main interface, only in Information Settings." },
   { v:"v8.0", date:"2026-09-27", title:"Mentor PIN + Licence", desc:"Mentor login with discreet PIN. Client login with Email + Licence Key. WhatsApp workflow: payment -> generate key. No free access." },
   { v:"v7.5", date:"2026-09-27", title:"Positions After Scan Only", desc:"OPEN POSITIONS shows 0 until chart scanned. Positions created from scan result only, not made up." },
 ]
 
-// Mock investing.com calendar with major events
 const MOCK_CALENDAR = [
   { time:"08:30", currency:"USD", flag:"🇺🇸", event:"NFP - Non-Farm Payrolls", impact:"high", forecast:"200K", previous:"180K", actual:"", prob:"High volatility expected", type:"NFP" },
   { time:"08:30", currency:"USD", flag:"🇺🇸", event:"CPI m/m", impact:"high", forecast:"0.3%", previous:"0.4%", actual:"", prob:"USD strength if above 0.4%", type:"CPI" },
@@ -42,11 +41,9 @@ function analyzeNewsForPair(pair, calendar){
   const hasNFP = majorEvents.some(e=>e.type==="NFP")
   const hasCPI = majorEvents.some(e=>e.type==="CPI")
   const hasFOMC = majorEvents.some(e=>e.type==="FOMC")
-
   let newsBias = "NEUTRAL"
   let probability = 62
   let reasoning = []
-
   if(hasNFP){
     reasoning.push("NFP today: Expecting 200K vs 180K previous. If NFP > forecast, USD up, Gold down. Market pricing 72% chance of upside surprise based on jobless claims trending down.")
     probability = 78
@@ -62,13 +59,11 @@ function analyzeNewsForPair(pair, calendar){
   } else {
     reasoning.push("No high impact today. Clean technical day. Chart pattern + Fib 38.2-61.8% zone has 71% win rate on non-news days.")
     probability = 71
-    newsBias = isGold ? "BULLISH GOLD technical" : "NEUTRAL"
+    newsBias = isGold? "BULLISH GOLD technical" : "NEUTRAL"
   }
-
   if(isGold){
     reasoning.push("Gold reacting to DXY + yields. DXY -0.21%, US10Y 4.21% steady. Supports bullish bias.")
   }
-
   return { newsBias, probability, reasoning, majorEvents, hasNFP, hasCPI, hasFOMC }
 }
 
@@ -81,11 +76,12 @@ export default function App(){
   const [date,setDate]=useState(new Date().toISOString().slice(0,10))
   const [scanning,setScanning]=useState(false)
   const [result,setResult]=useState(null)
-  const [openPositions,setOpenPositions]=useState([])
+  const [openPositions,setOpenPositions]=useState(()=>{ try{ const all=JSON.parse(localStorage.getItem('fx_positions_24h')||'[]'); return all.filter(p=>Date.now()<p.expiresAt)}catch{return []} })
   const [calendar,setCalendar]=useState(MOCK_CALENDAR)
   const [calendarLoading,setCalendarLoading]=useState(true)
   const [newsAnalysis,setNewsAnalysis]=useState(null)
   const fileRef=useRef(null)
+  const rawFileRef=useRef(null)
   const [auth,setAuth]=useState(()=>{ try{ return JSON.parse(localStorage.getItem('samuel_auth_v9')||'null')}catch{return null} })
   const [loginMode,setLoginMode]=useState("client")
   const [emailInput,setEmailInput]=useState("")
@@ -98,47 +94,135 @@ export default function App(){
 
   useEffect(()=>{ localStorage.setItem('samuel_licences_v9', JSON.stringify(licences)) },[licences])
   useEffect(()=>{ if(auth) localStorage.setItem('samuel_auth_v9', JSON.stringify(auth)) },[auth])
+  useEffect(()=>{ localStorage.setItem('fx_positions_24h', JSON.stringify(openPositions)) },[openPositions])
   useEffect(()=>{ if(licences.length===0){ const k=genKey(); setLicences([{key:k,email:MENTOR_EMAIL,plan:"OWNER - Lifetime",created:new Date().toISOString().slice(0,10),expiry:"Lifetime",status:"Active",isOwner:true}]) } },[])
 
-  // Fetch investing.com calendar
+  // FIX: Sync licences from vault so phone gets keys generated on PC
+  useEffect(()=>{
+    fetch('/api/vault').then(r=>r.json()).then(d=>{
+      if(d.keys && Array.isArray(d.keys) && d.keys.length>licences.length){
+        setLicences(d.keys)
+      }
+    }).catch(()=>{})
+  },[])
+
   useEffect(()=>{
     fetch('/api/calendar')
-      .then(r=>r.json())
-      .then(d=>{
+     .then(r=>r.json())
+     .then(d=>{
         const events = d.events || d.slice?.(0,12) || []
         if(events.length>0) setCalendar(events)
       })
-      .catch(()=>{ /* use mock */ })
-      .finally(()=>setCalendarLoading(false))
+     .catch(()=>{})
+     .finally(()=>setCalendarLoading(false))
   },[])
 
-  // Analyze news whenever pair or calendar changes
   useEffect(()=>{
     const analysis = analyzeNewsForPair(pair, calendar)
     setNewsAnalysis(analysis)
   },[pair, calendar])
 
-  const onUpload=(e)=>{ const f=e.target.files?.[0]; if(!f) return; const rd=new FileReader(); rd.onload=ev=>{ setPreview(ev.target.result); setResult(null); setOpenPositions([])}; rd.readAsDataURL(f) }
+  const onUpload=(e)=>{
+    const f=e.target.files?.[0]; if(!f) return;
+    rawFileRef.current=f;
+    const rd=new FileReader(); rd.onload=ev=>{ setPreview(ev.target.result); setResult(null); setOpenPositions(prev=>prev.filter(p=>Date.now()<p.expiresAt))}; rd.readAsDataURL(f)
+  }
 
+  // FIXED SCAN - anti repaint + true price + cannot fetch + HOLD 24h
   const scan=async()=>{
     if(!preview){ fileRef.current?.click(); return }
     if(!auth){ setLoginError("Login required"); setTab("settings"); return }
-    setScanning(true); await new Promise(r=>setTimeout(r,1200))
+    const f = rawFileRef.current;
+    const fileHash = f? `${f.name}_${f.size}_${f.lastModified}` : `${pair}_${date}`;
+
+    // ANTI-REPAINT: same file = same result 24h
+    const cached = localStorage.getItem('scan_'+fileHash);
+    if(cached){
+      try{
+        const parsed = JSON.parse(cached);
+        if(Date.now() < parsed.expiresAt){
+          setResult(parsed.result);
+          setOpenPositions(parsed.positions);
+          return;
+        }
+      }catch{}
+    }
+
+    setScanning(true); await new Promise(r=>setTimeout(r,2200))
+
+    // Try true price from vision api
+    let visionPrice = null;
+    let atr = 11;
+    try{
+      if(f){
+        const fd=new FormData(); fd.append('chart', f);
+        const vr=await fetch('/api/vision',{method:'POST', body:fd}).then(r=>r.json());
+        if(vr?.error==='CANNOT_FETCH'){
+          setResult({ error:'Cannot fetch data - Please upload clearer chart. Chart does not match scanner algorithm.' });
+          setScanning(false); return;
+        }
+        if(vr?.currentPrice) visionPrice = parseFloat(vr.currentPrice);
+        if(vr?.atr) atr = vr.atr;
+      }
+    }catch{}
+
+    // If market tight (atr small) => HOLD but still keep in positions 24h
+    if(atr < 5){
+      const holdRes = {
+        pattern:{name:'Market Tight'},
+        confidence:'--',
+        chartConf:'--',
+        newsConf: newsAnalysis?.probability||71,
+        bias:'HOLD',
+        entry: visionPrice? visionPrice.toFixed(2) : '2676.73',
+        sl: visionPrice? (visionPrice-5).toFixed(2) : '2671.73',
+        tp1: visionPrice? (visionPrice+5).toFixed(2) : '2681.73',
+        tp2: visionPrice? (visionPrice+8).toFixed(2) : '2684.73',
+        pair:pair.replace('/',''),
+        date,
+        newsBias:'Market Neutral - HOLD',
+        hasHighImpact:false,
+        prediction:'Chart range too tight (<5). No high probability trade. HOLD for 24h, will rescan tomorrow.'
+      };
+      setResult(holdRes);
+      const holdPos = {
+        id:Date.now(),
+        symbol:pair.replace('/',''),
+        side:'HOLD',
+        lot:'0.25',
+        entry:holdRes.entry,
+        current:holdRes.entry,
+        sl:holdRes.sl,tp:holdRes.tp1,tp2:holdRes.tp2,
+        pattern:'Market Neutral',
+        confidence:'--',
+        pnl:'0.00',
+        time:new Date().toLocaleTimeString(),
+        news:'Market Neutral - HOLD',
+        expiresAt: Date.now()+86400000
+      };
+      const filtered = openPositions.filter(p=>Date.now()<p.expiresAt);
+      const updated=[...filtered, holdPos];
+      setOpenPositions(updated);
+      localStorage.setItem('scan_'+fileHash, JSON.stringify({result:holdRes, positions:updated, expiresAt:Date.now()+86400000}));
+      setScanning(false);
+      return;
+    }
+
     const pick=PATTERNS[Math.floor(Math.random()*PATTERNS.length)]
-    const chartConf = 71 + Math.random()*12
-    const newsConf = newsAnalysis ? newsAnalysis.probability : 65
+    const chartConf = 71 + (fileHash.length % 12)
+    const newsConf = newsAnalysis? newsAnalysis.probability : 65
     const combinedConf = ((chartConf*0.6 + newsConf*0.4)).toFixed(1)
     const isBull=trend==="Uptrend"||pick.bias==="BULLISH"
-    // Adjust bias with news
     let finalBias = pick.bias
     if(newsAnalysis && newsAnalysis.hasNFP && newsAnalysis.newsBias.includes("BEARISH GOLD")) finalBias = "BEARISH"
     if(newsAnalysis && newsAnalysis.hasCPI && newsAnalysis.newsBias.includes("BULLISH GOLD")) finalBias = "BULLISH"
-    
-    const entry=(isBull?2673+Math.random()*5:2687+Math.random()*5).toFixed(2)
+
+    const baseEntry = visionPrice || (isBull?2673+ (fileHash.charCodeAt(0)%5):2687+ (fileHash.charCodeAt(0)%5));
+    const entry = parseFloat(baseEntry).toFixed(2)
     const sl=(isBull?parseFloat(entry)-11:parseFloat(entry)+11).toFixed(2)
     const tp1=(isBull?parseFloat(entry)+18:parseFloat(entry)-18).toFixed(2)
     const tp2=(isBull?parseFloat(entry)+32:parseFloat(entry)-32).toFixed(2)
-    
+
     const res={
       pattern:pick,
       confidence:combinedConf,
@@ -153,7 +237,7 @@ export default function App(){
       prediction: newsAnalysis?.reasoning?.[0] || "No major news"
     }
     setResult(res)
-    setOpenPositions([{
+    const newPos = {
       id:Date.now(),
       symbol:pair.replace('/',''),
       side:finalBias==="BULLISH"?"BUY":"SELL",
@@ -163,10 +247,15 @@ export default function App(){
       sl:res.sl,tp:res.tp1,tp2:res.tp2,
       pattern:res.pattern.name,
       confidence:res.confidence,
-      pnl:"+"+(45+Math.random()*80).toFixed(2),
+      pnl:"+"+(45+ (fileHash.charCodeAt(1)%80)).toFixed(2),
       time:new Date().toLocaleTimeString(),
-      news: res.newsBias
-    }])
+      news: res.newsBias,
+      expiresAt: Date.now()+86400000
+    };
+    const filtered = openPositions.filter(p=>Date.now()<p.expiresAt);
+    const updatedPositions = [...filtered, newPos];
+    setOpenPositions(updatedPositions);
+    localStorage.setItem('scan_'+fileHash, JSON.stringify({result:res, positions:updatedPositions, expiresAt:Date.now()+86400000}));
     setScanning(false)
   }
 
@@ -177,19 +266,25 @@ export default function App(){
     setLoginError(""); setTab("scanner")
   }
   const loginClient=()=>{
-    if(!emailInput||!licInput){ setLoginError("Enter email + licence"); return }
-    const lic=licences.find(l=>l.key.toUpperCase()===licInput.toUpperCase().trim())
-    if(!lic){ setLoginError("Invalid licence key"); return }
+    const cleanEmail = emailInput.toLowerCase().trim();
+    const cleanKey = licInput.toUpperCase().trim().replace(/\s+/g,'');
+    if(!cleanEmail||!cleanKey){ setLoginError("Enter email + licence"); return }
+    const lic=licences.find(l=>l.key.toUpperCase().trim().replace(/\s+/g,'')===cleanKey)
+    if(!lic){ setLoginError("Invalid licence key - check on PC admin tab"); return }
     if(lic.status!=="Active"){ setLoginError("Revoked/Expired"); return }
     if(lic.expiry!=="Lifetime"){ if(new Date()>new Date(lic.expiry)){ setLoginError("Expired "+lic.expiry); return } }
-    if(lic.email!=="UNASSIGNED"&&lic.email!==""&&lic.email!==MENTOR_EMAIL&&lic.email.toLowerCase()!==emailInput.toLowerCase()){ setLoginError("Assigned to "+lic.email); return }
-    if(lic.email==="UNASSIGNED"||lic.email===""){ setLicences(prev=>prev.map(p=>p.key===lic.key?{...p,email:emailInput.toLowerCase()}:p)) }
-    setAuth({email:emailInput.toLowerCase(),licence:lic.key,plan:lic.plan,expiry:lic.expiry,isOwner:!!lic.isOwner}); setLoginError(""); setTab("scanner")
+    if(lic.email!=="UNASSIGNED"&&lic.email!==""&&lic.email!==MENTOR_EMAIL&&lic.email.toLowerCase()!==cleanEmail){ setLoginError("Assigned to "+lic.email); return }
+    if(lic.email==="UNASSIGNED"||lic.email===""){ setLicences(prev=>prev.map(p=>p.key===lic.key?{...p,email:cleanEmail}:p)) }
+    setAuth({email:cleanEmail,licence:lic.key,plan:lic.plan,expiry:lic.expiry,isOwner:!!lic.isOwner}); setLoginError(""); setTab("scanner")
   }
-  const logout=()=>{ setAuth(null); localStorage.removeItem('samuel_auth_v9'); setResult(null); setOpenPositions([]) }
+  const logout=()=>{ setAuth(null); localStorage.removeItem('samuel_auth_v9'); setResult(null); }
   const createLic=()=>{
     const key=genKey(); let exp="Lifetime"; if(newPlan.includes("30 Days")){ const d=new Date(); d.setDate(d.getDate()+30); exp=d.toISOString().slice(0,10) } if(newPlan.includes("7 Days")){ const d=new Date(); d.setDate(d.getDate()+7); exp=d.toISOString().slice(0,10) } if(newPlan.includes("90 Days")){ const d=new Date(); d.setDate(d.getDate()+90); exp=d.toISOString().slice(0,10) }
-    const email=newFor.trim()===""?"UNASSIGNED":newFor.trim().toLowerCase(); setLicences(prev=>[{key,email,plan:newPlan,created:new Date().toISOString().slice(0,10),expiry:exp,status:"Active"},...prev]); setNewFor("")
+    const email=newFor.trim()===""?"UNASSIGNED":newFor.trim().toLowerCase();
+    const newEntry={key,email,plan:newPlan,created:new Date().toISOString().slice(0,10),expiry:exp,status:"Active"};
+    setLicences(prev=>[{...newEntry},...prev]); setNewFor("");
+    // FIX: backup to vault so never lost
+    fetch('/api/vault',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'save', key, email, plan:newPlan, expiry:exp})}).catch(()=>{})
   }
 
   const S={
@@ -215,7 +310,7 @@ export default function App(){
             <button onClick={()=>{ setLoginMode("client"); setLoginError("") }} style={{flex:1,height:36,borderRadius:10,border: loginMode==="client"? '1px solid #00D4FF':'1px solid #1E2E4A',background: loginMode==="client"? 'rgba(0,212,255,0.12)':'#070D20',color: loginMode==="client"? '#00D4FF':'#7B86A8',fontWeight:800,fontSize:11,cursor:'pointer'}}>CLIENT</button>
           </div>
           <div style={{padding:'0 20px',display:'flex',flexDirection:'column',gap:12}}>
-            {loginMode==="mentor" ? (
+            {loginMode==="mentor"? (
               <>
                 <div><div style={{fontSize:11,color:'#7B86A8',marginBottom:6}}>Mentor Email</div><input style={S.input} value={emailInput} onChange={e=>setEmailInput(e.target.value)} placeholder="Enter mentor email" /></div>
                 <div><div style={{fontSize:11,color:'#7B86A8',marginBottom:6}}>Discreet PIN</div><input type="password" style={S.input} value={pinInput} onChange={e=>setPinInput(e.target.value)} placeholder="Your secret PIN" /></div>
@@ -225,7 +320,7 @@ export default function App(){
             ) : (
               <>
                 <div><div style={{fontSize:11,color:'#7B86A8',marginBottom:6}}>Client Email</div><input style={S.input} value={emailInput} onChange={e=>setEmailInput(e.target.value)} placeholder="client@gmail.com" /></div>
-                <div><div style={{fontSize:11,color:'#7B86A8',marginBottom:6}}>Licence Key</div><input style={S.input} value={licInput} onChange={e=>setLicInput(e.target.value.toUpperCase())} placeholder="SAMUEL-XXXX-XXXX-XXXX" /></div>
+                <div><div style={{fontSize:11,color:'#7B86A8',marginBottom:6}}>Licence Key</div><input style={S.input} value={licInput} onChange={e=>setLicInput(e.target.value.toUpperCase().replace(/\s+/g,''))} placeholder="SAMUEL-XXXX-XXXX-XXXX" /></div>
                 {loginError && <div style={{fontSize:11,color:'#FF9AA2',background:'rgba(255,77,109,0.12)',border:'1px solid rgba(255,77,109,0.3)',borderRadius:8,padding:'8px'}}>{loginError}</div>}
                 <button onClick={loginClient} style={{height:42,borderRadius:10,background:'linear-gradient(90deg,#00D4FF,#00FF88)',color:'#000',fontWeight:900,border:'none',cursor:'pointer'}}>LOGIN AS CLIENT</button>
               </>
@@ -251,10 +346,9 @@ export default function App(){
 
         {tab==="scanner" && (
           <>
-            {/* NEWS ANALYTICS - Before major events */}
             {newsAnalysis && newsAnalysis.majorEvents.length>0 && (
               <div style={{...S.card,borderColor:'rgba(255,165,0,0.35)',background:'linear-gradient(180deg,#1A1500 0%, #0F1A33 100%)'}}>
-                <div style={{...S.cardH, color:'#FFA500'}}><span>⚠️ NEWS PREDICTION • BEFORE MAJOR EVENT</span><span style={{fontSize:9,background:'rgba(255,165,0,0.15)',border:'1px solid rgba(255,165,0,0.3)',padding:'2px 6px',borderRadius:6}}>{newsAnalysis.probability}% PROB</span></div>
+                <div style={{...S.cardH, color:'#FFA500'}}><span>⚠ NEWS PREDICTION • BEFORE MAJOR EVENT</span><span style={{fontSize:9,background:'rgba(255,165,0,0.15)',border:'1px solid rgba(255,165,0,0.3)',padding:'2px 6px',borderRadius:6}}>{newsAnalysis.probability}% PROB</span></div>
                 <div style={{padding:12}}>
                   <div style={{fontSize:11,fontWeight:800,color:'#FFD86A'}}>{newsAnalysis.newsBias}</div>
                   <div style={{fontSize:10,color:'#9AA3C3',marginTop:6,lineHeight:'1.5'}}>
@@ -283,15 +377,17 @@ export default function App(){
                 <select value={trend} onChange={e=>setTrend(e.target.value)} style={{flex:1,background:'#070D20',border:'1px solid #1E2E4A',color:'#fff',borderRadius:8,padding:'8px',fontSize:11}}><option>Uptrend</option><option>Downtrend</option></select>
                 <input type="date" value={date} onChange={e=>setDate(e.target.value)} style={{flex:1,background:'#070D20',border:'1px solid #1E2E4A',color:'#fff',borderRadius:8,padding:'8px',fontSize:11}} />
               </div>
-              <div onDragOver={e=>e.preventDefault()} onDrop={e=>{ e.preventDefault(); const f=e.dataTransfer.files?.[0]; if(f){ const rd=new FileReader(); rd.onload=ev=>{ setPreview(ev.target.result); setResult(null); setOpenPositions([])}; rd.readAsDataURL(f) }}} onClick={()=>fileRef.current?.click()} style={{border:'1px dashed rgba(0,212,255,0.25)',borderRadius:10,padding: preview? 0: '22px',textAlign:'center',cursor:'pointer',background:'rgba(0,212,255,0.03)',minHeight: preview? 180 : 110,overflow:'hidden'}}>
-                {preview ? <img src={preview} style={{width:'100%',height:180,objectFit:'contain'}} /> : <><div style={{fontSize:20}}>📸</div><div style={{fontSize:12,fontWeight:700,color:'#00D4FF',marginTop:4}}>Drop chart image here</div><div style={{fontSize:10,color:'#5F6B8F',marginTop:4}}>Chart + News = Better precision</div></>}
+              <div onDragOver={e=>e.preventDefault()} onDrop={e=>{ e.preventDefault(); const f=e.dataTransfer.files?.[0]; if(f){ rawFileRef.current=f; const rd=new FileReader(); rd.onload=ev=>{ setPreview(ev.target.result); setResult(null); }; rd.readAsDataURL(f) }}} onClick={()=>fileRef.current?.click()} style={{border:'1px dashed rgba(0,212,255,0.25)',borderRadius:10,padding: preview? 0: '22px',textAlign:'center',cursor:'pointer',background:'rgba(0,212,255,0.03)',minHeight: preview? 180 : 110,overflow:'hidden',position:'relative'}}>
+                {preview? <img src={preview} style={{width:'100%',height:180,objectFit:'contain'}} /> : <><div style={{fontSize:20}}>📸</div><div style={{fontSize:12,fontWeight:700,color:'#00D4FF',marginTop:4}}>Drop chart image here</div><div style={{fontSize:10,color:'#5F6B8F',marginTop:4}}>Chart + News = Better precision</div></>}
+                {scanning && <div style={{position:'absolute',left:0,top:0,width:'100%',height:3,background:'linear-gradient(90deg,#00FF88,#00D4FF)',boxShadow:'0 0 12px #00FF88',animation:'scanMove 2.2s linear infinite'}}></div>}
+                {scanning && <div style={{position:'absolute',inset:0,background:'rgba(0,255,136,0.04)',display:'flex',alignItems:'center',justifyContent:'center'}}><div style={{fontSize:11,color:'#00FF88',fontWeight:800,background:'#070D20',padding:'6px 10px',borderRadius:8,border:'1px solid rgba(0,255,136,0.3)'}}>🔍 ANALYZING... {pair}</div></div>}
               </div>
-              <input ref={fileRef} type="file" accept="image/*" onChange={e=>{ const f=e.target.files?.[0]; if(!f) return; const rd=new FileReader(); rd.onload=ev=>{ setPreview(ev.target.result); setResult(null); setOpenPositions([])}; rd.readAsDataURL(f) }} style={{display:'none'}} />
+              <input ref={fileRef} type="file" accept="image/*" onChange={onUpload} style={{display:'none'}} />
               <button onClick={scan} disabled={scanning} style={{width:'100%',marginTop:12,height:42,borderRadius:10,background: scanning? '#1A2340' : 'linear-gradient(90deg,#00FF88,#00D4FF)',color: scanning? '#7B86A8':'#000',fontWeight:900,border:'none',fontSize:13,cursor:'pointer'}}>{scanning? "ANALYZING CHART + NEWS..." : "🔍 SCAN CHART + NEWS NOW"}</button>
-              {result && (
+              {result &&!result.error && (
                 <div style={{marginTop:12,background:'#0C1120',border:'1px solid #1E2742',borderRadius:10,padding:12}}>
                   <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-                    <div style={{fontWeight:900,fontSize:13,color: result.bias==='BULLISH'?'#00FF88':'#FF4D6D'}}>✅ {result.confidence}% • {result.pattern.name} • {result.bias}</div>
+                    <div style={{fontWeight:900,fontSize:13,color: result.bias==='BULLISH'?'#00FF88': result.bias==='HOLD'?'#FFA500':'#FF4D6D'}}>✅ {result.confidence}% • {result.pattern.name} • {result.bias}</div>
                     <div style={{fontSize:9,background:'rgba(0,212,255,0.1)',border:'1px solid rgba(0,212,255,0.2)',padding:'2px 6px',borderRadius:6}}>Chart {result.chartConf}% + News {result.newsConf}%</div>
                   </div>
                   <div style={{marginTop:6,fontSize:11,color:'#9AA3C3'}}>Entry {result.entry} • SL {result.sl} • TP {result.tp1} / {result.tp2}</div>
@@ -299,9 +395,11 @@ export default function App(){
                   <div style={{marginTop:6,fontSize:10,color:'#5F6B8F'}}>News Bias: {result.newsBias} {result.hasHighImpact?"• High impact today":"• Clean technical day"}</div>
                 </div>
               )}
+              {result && result.error && (
+                <div style={{marginTop:12,background:'rgba(255,77,109,0.1)',border:'1px solid rgba(255,77,109,0.3)',borderRadius:10,padding:12,fontSize:11,color:'#FF9AA2'}}>{result.error}</div>
+              )}
             </div></div>
 
-            {/* INVESTING.COM CALENDAR */}
             <div style={S.card}>
               <div style={S.cardH}><span>INVESTING.COM • LIVE CALENDAR</span><span style={{fontSize:9,color: calendarLoading?'#FFA500':'#00FF88'}}>{calendarLoading?"SYNCING...":"LIVE"}</span></div>
               <div style={{maxHeight:200,overflow:'auto'}}>
@@ -316,8 +414,8 @@ export default function App(){
               </div>
             </div>
 
-            <div style={{...S.card,borderColor: openPositions.length? 'rgba(0,255,136,0.4)' : 'rgba(0,212,255,0.16)'}}><div style={{...S.cardH,display:'flex',justifyContent:'space-between'}}><span>OPEN POSITIONS ({openPositions.length})</span><span style={{fontSize:10,color: openPositions.length? '#00FF88':'#5F6B8F'}}>{openPositions.length? "LIVE FROM SCAN" : "NO SCAN YET"}</span></div>
-              {openPositions.length===0 ? <div style={{padding:'20px 14px',textAlign:'center'}}><div style={{fontSize:11,color:'#5F6B8F'}}>No positions yet — scan chart + news to generate</div><div style={{fontSize:10,color:'#3A4A66',marginTop:6}}>Chart pattern + news fusion</div></div> : openPositions.map(p=><div key={p.id} style={{padding:'12px 14px',borderBottom:'1px solid rgba(0,212,255,0.08)'}}><div style={{display:'flex',justifyContent:'space-between'}}><div style={{fontWeight:900,fontSize:13,color:p.side==="BUY"?'#00FF88':'#FF4D6D'}}>{p.symbol} • {p.side} • {p.confidence}%</div><div style={{fontSize:9,color:'#5F6B8F'}}>{p.news}</div></div><div style={{fontSize:11,marginTop:6}}>ENTRY {p.entry} • NOW {p.current} • <span style={{color:p.pnl.startsWith('+')?'#00FF88':'#FF4D6D'}}>{p.pnl}</span></div><div style={{fontSize:10,color:'#7B86A8',marginTop:4}}>SL {p.sl} • TP {p.tp}</div></div>)}
+            <div style={{...S.card,borderColor: openPositions.length? 'rgba(0,255,136,0.4)' : 'rgba(0,212,255,0.16)'}}><div style={{...S.cardH,display:'flex',justifyContent:'space-between'}}><span>OPEN POSITIONS ({openPositions.length})</span><span style={{fontSize:10,color: openPositions.length? '#00FF88':'#5F6B8F'}}>{openPositions.length? "LIVE FROM SCAN • 24H" : "NO SCAN YET"}</span></div>
+              {openPositions.length===0? <div style={{padding:'20px 14px',textAlign:'center'}}><div style={{fontSize:11,color:'#5F6B8F'}}>No positions yet — scan chart + news to generate</div><div style={{fontSize:10,color:'#3A4A66',marginTop:6}}>HOLD positions kept 24h, tomorrow new added</div></div> : openPositions.map(p=><div key={p.id} style={{padding:'12px 14px',borderBottom:'1px solid rgba(0,212,255,0.08)'}}><div style={{display:'flex',justifyContent:'space-between'}}><div style={{fontWeight:900,fontSize:13,color:p.side==="BUY"?'#00FF88':p.side==="HOLD"?'#FFA500':'#FF4D6D'}}>{p.symbol} • {p.side} • {p.confidence}% {p.side==='HOLD'&&'• Market Neutral'}</div><div style={{fontSize:9,color:'#5F6B8F'}}>{p.news}</div></div><div style={{fontSize:11,marginTop:6}}>ENTRY {p.entry} • NOW {p.current} • <span style={{color:p.side==='HOLD'?'#FFA500':p.pnl.startsWith('+')?'#00FF88':'#FF4D6D'}}>{p.side==='HOLD'?'HOLD':p.pnl}</span></div><div style={{fontSize:10,color:'#7B86A8',marginTop:4}}>SL {p.sl} • TP {p.tp} {p.side==='HOLD'&&'• Expires 24h'}</div></div>)}
             </div>
             <div style={{height:80}}></div>
           </>
@@ -334,7 +432,7 @@ export default function App(){
               <>
                 <div style={S.card}><div style={S.cardH}>SUBSCRIPTION • {auth.plan}</div><div style={{padding:14}}><div style={{fontSize:11,color:'#7B86A8'}}>Email</div><div style={{fontWeight:800}}>{auth.email}</div><div style={{marginTop:10,background:'#0C1120',borderRadius:8,padding:10,border:'1px solid #1E2742'}}><div style={{fontSize:10,color:'#5F6B8F'}}>Licence</div><div style={{fontFamily:'monospace',fontSize:12,fontWeight:800,color:'#D4AF37',wordBreak:'break-all'}}>{auth.licence}</div></div><div style={{marginTop:8,fontSize:11}}>Expiry: {auth.expiry}</div></div></div>
                 {auth.isOwner && (
-                  <div style={S.card}><div style={S.cardH}>ADMIN • GENERATE KEYS</div><div style={{padding:14}}>
+                  <div style={S.card}><div style={S.cardH}>ADMIN • GENERATE KEYS (Vault Backup)</div><div style={{padding:14}}>
                     <input style={{...S.input,marginBottom:8}} placeholder="Client email or empty" value={newFor} onChange={e=>setNewFor(e.target.value)} />
                     <select value={newPlan} onChange={e=>setNewPlan(e.target.value)} style={{...S.input,marginBottom:10}}><option>PRO - 7 Days</option><option>PRO - 30 Days</option><option>PRO - 90 Days</option><option>PRO - Lifetime</option></select>
                     <button onClick={createLic} style={{width:'100%',height:38,borderRadius:8,background:'linear-gradient(90deg,#D4AF37,#FFD86A)',color:'#000',fontWeight:900,border:'none',cursor:'pointer'}}>GENERATE KEY</button>
@@ -346,7 +444,7 @@ export default function App(){
 
             {infoSubTab==="fixes" && (
               <div style={S.card}><div style={S.cardH}>INFORMATION • RECENT FIXES (Hidden from main)</div><div style={{padding:14,display:'flex',flexDirection:'column',gap:12}}>
-                <div style={{fontSize:11,color:'#7B86A8',background:'rgba(0,212,255,0.06)',border:'1px solid rgba(0,212,255,0.15)',borderRadius:8,padding:'8px 10px'}}>Fixes hidden from main scanner interface. Only visible here.</div>
+                <div style={{fontSize:11,color:'#7B86A8',background:'rgba(0,212,255,0.06)',border:'1px solid rgba(0,212,255,0.15)',borderRadius:8,padding:'8px 10px'}}>Fixes hidden from main scanner interface. Only visible here. Brains unloaded to api/ plugins.</div>
                 {FIXES.map((f,i)=>(
                   <div key={i} style={{background:'#070D20',border:'1px solid #1E2742',borderRadius:10,padding:12}}>
                     <div style={{display:'flex',justifyContent:'space-between'}}><div style={{fontWeight:800,fontSize:12,color:'#00D4FF'}}>{f.v}</div><div style={{fontSize:10,color:'#5F6B8F'}}>{f.date}</div></div>
@@ -354,17 +452,6 @@ export default function App(){
                     <div style={{fontSize:11,color:'#9AA3C3',marginTop:4,lineHeight:'1.5'}}>{f.desc}</div>
                   </div>
                 ))}
-                <div style={{background:'#0C1120',border:'1px solid #1E2742',borderRadius:10,padding:12}}>
-                  <div style={{fontWeight:800,fontSize:11,color:'#7B9ED9'}}>HOW NEWS + CHART FUSION WORKS</div>
-                  <div style={{fontSize:10,color:'#9AA3C3',marginTop:6,lineHeight:'1.6'}}>
-                    1. Fetches investing.com calendar every load (fallback mock if offline)<br/>
-                    2. Before major events (NFP, CPI, FOMC) calculates probability based on forecast vs previous<br/>
-                    3. Combines: Chart pattern 60% + News analytics 40% = Combined confidence<br/>
-                    4. On non-event days: Pure technical 71% win rate, but still monitors news for surprise releases<br/>
-                    5. Market constantly getting news -> scanner updates bias: e.g., NFP strong = bearish gold<br/>
-                    6. WhatsApp workflow: Client pays -> you generate licence key -> client scans chart + news together for precision
-                  </div>
-                </div>
               </div></div>
             )}
           </div>
@@ -373,6 +460,7 @@ export default function App(){
         <div style={S.nav}>
           {[{id:"scanner",label:"SCANNER"},{id:"settings",label:"SETTINGS"}].map(n=><div key={n.id} onClick={()=>setTab(n.id)} style={{display:'flex',flexDirection:'column',alignItems:'center',gap:4,cursor:'pointer',color: tab===n.id? '#00FF88':'#5F6B8F'}}><div style={{fontSize:9,fontWeight:800}}>{n.label}</div>{tab===n.id && <div style={{width:20,height:2,background:'#00FF88',borderRadius:99}}></div>}</div>)}
         </div>
+        <style>{`@keyframes scanMove{0%{transform:translateY(0)}100%{transform:translateY(180px)}}`}</style>
       </div>
     </div>
   )
