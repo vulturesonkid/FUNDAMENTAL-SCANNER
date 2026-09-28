@@ -1,7 +1,0 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
-html, body { background:#070A14; margin:0; font-family: Inter, system-ui, sans-serif; }
-* { -webkit-font-smoothing: antialiased; }
-::-webkit-scrollbar { width:6px; height:6px; }
-::-webkit-scrollbar-thumb { background:#1E2742; border-radius:10px; }
