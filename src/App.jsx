@@ -15,7 +15,7 @@ const MENTOR_EMAIL="vulturesonkidd@gmail.com"
 const MENTOR_PIN="6084549888"
 
 const FIXES = [
-  { v:"v8.0 - 2026-09-27", date:"2026-09-27", title:"Mentor PIN + Licence System", desc:"Added mentor login with discreet PIN (6084549888). Clients login with Email + Licence Key. No free access. Admin can generate keys." },
+  { v:"v8.0 - 2026-09-27", date:"2026-09-27", title:"Mentor PIN + Licence System", desc:"Added mentor login with discreet PIN (hidden). Clients login with Email + Licence Key. No free access. Admin can generate keys." },
   { v:"v7.5 - 2026-09-27", date:"2026-09-27", title:"Open Positions Only After Scan", desc:"Fixed fake positions. OPEN POSITIONS now shows (0) until you scan a chart. Positions created ONLY from scan result (Entry, SL, TP based on Fib 38.2-61.8 + pattern). No made-up P&L." },
   { v:"v7.0 - 2026-09-27", date:"2026-09-27", title:"Removed Fake Stats", desc:"Removed fake time (9:11), battery %, IMP 7/15, fake RSI/MACD from header. Clean professional header now." },
   { v:"v6.0 - 2026-09-27", date:"2026-09-27", title:"AI Scalper UI", desc:"Upgraded from simple drag-drop box to AI Scalper live interface with SCAN SUMMARY, OPEN POSITIONS, WATCHLIST SCAN, bottom nav SCANNER/POSITIONS/RISK/SETTINGS." },
@@ -64,7 +64,7 @@ export default function App(){
   }
 
   const loginMentor=()=>{
-    if(emailInput.toLowerCase().trim()!==MENTOR_EMAIL.toLowerCase()){ setLoginError("Mentor email must be "+MENTOR_EMAIL); return }
+    if(emailInput.toLowerCase().trim()!==MENTOR_EMAIL.toLowerCase()){ setLoginError("Invalid mentor credentials"); return }
     if(pinInput!==MENTOR_PIN){ setLoginError("Wrong discreet PIN"); return }
     setAuth({email:MENTOR_EMAIL,licence:"OWNER-MASTER-KEY",plan:"OWNER - Lifetime",expiry:"Lifetime",isOwner:true, isMentor:true})
     setLoginError(""); setTab("scanner")
@@ -110,7 +110,7 @@ export default function App(){
           <div style={{padding:'0 20px',display:'flex',flexDirection:'column',gap:12}}>
             {loginMode==="mentor" ? (
               <>
-                <div><div style={{fontSize:11,color:'#7B86A8',marginBottom:6}}>Mentor Email</div><input style={S.input} value={emailInput} onChange={e=>setEmailInput(e.target.value)} placeholder={MENTOR_EMAIL} /></div>
+                <div><div style={{fontSize:11,color:'#7B86A8',marginBottom:6}}>Mentor Email</div><input style={S.input} value={emailInput} onChange={e=>setEmailInput(e.target.value)} placeholder="Enter mentor email" /></div>
                 <div><div style={{fontSize:11,color:'#7B86A8',marginBottom:6}}>Discreet PIN</div><input type="password" style={S.input} value={pinInput} onChange={e=>setPinInput(e.target.value)} placeholder="Your secret PIN" /></div>
                 {loginError && <div style={{fontSize:11,color:'#FF9AA2',background:'rgba(255,77,109,0.12)',border:'1px solid rgba(255,77,109,0.3)',borderRadius:8,padding:'8px'}}>{loginError}</div>}
                 <button onClick={loginMentor} style={{height:42,borderRadius:10,background:'linear-gradient(90deg,#00FF88,#D4AF37)',color:'#000',fontWeight:900,border:'none',cursor:'pointer'}}>LOGIN AS MENTOR</button>
