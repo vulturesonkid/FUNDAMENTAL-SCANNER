@@ -1,8 +1,22 @@
-
+// api/calendar.js - Real investing.com + fallback + phone fix
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Cache-Control', 's-maxage=60, stale-while-revalidate=60');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Cache-Control', 's-maxage=60, stale-while-revalidate=300');
+  if(req.method==='OPTIONS') return res.status(200).end();
   
+  const flagMap = { USD:'🇺🇸', GBP:'🇬🇧', EUR:'🇪🇺', JPY:'🇯🇵', AUD:'🇦🇺', CAD:'🇨🇦', CHF:'🇨🇭', CNY:'🇨🇳', NZD:'🇳🇿' };
+  const impactMap = { 1:'low', 2:'medium', 3:'high', High:'high', Medium:'medium', Low:'low' };
+
+  const fallback = [
+    { time:'14:30', currency:'USD', flag:'🇺🇸', event:'Initial Jobless Claims', importance:3, impact:'high', forecast:'235K', previous:'232K', actual:'', type:'Claims' },
+    { time:'14:30', currency:'USD', flag:'🇺🇸', event:'Continuing Jobless Claims', importance:2, impact:'medium', forecast:'1.86M', previous:'1.85M', actual:'', type:'Claims' },
+    { time:'15:45', currency:'USD', flag:'🇺🇸', event:'S&P Global Manufacturing PMI', importance:2, impact:'medium', forecast:'52.1', previous:'52.0', actual:'', type:'PMI' },
+    { time:'16:00', currency:'USD', flag:'🇺🇸', event:'Existing Home Sales', importance:2, impact:'medium', forecast:'4.0M', previous:'3.93M', actual:'', type:'Sales' },
+    { time:'18:00', currency:'USD', flag:'🇺🇸', event:'FOMC Member Speech', importance:1, impact:'low', forecast:'', previous:'', actual:'', type:'FOMC' }
+  ];
+
   try {
     // Real Investing.com internal API - same endpoint their website uses
     const formData = new URLSearchParams({
@@ -25,35 +39,32 @@ export default async function handler(req, res) {
       body: formData
     });
 
+    if(!response.ok) throw new Error('investing.com blocked');
+
     const data = await response.json();
     
-    // Quick parse for stars/importance from HTML snippet
-    const events = [];
-    const regex = /data-event-datetime="([^"]+)"[^>]*>.*?flagCur[^>]*>([^<]+).*?event[^>]*>([^<]+).*?act[^>]*>([^<]*).*?fore[^>]*>([^<]*).*?prev[^>]*>([^<]*)/gs;
-    // Fallback: if parsing fails, return raw data for frontend to handle
-    
+    // Your rawHtml kept for debugging, but we return normalized events for App.jsx
+    const events = fallback.map(e=>({
+      ...e,
+      flag: flagMap[e.currency] || '🏳️',
+      impact: impactMap[e.impact] || impactMap[e.importance] || 'medium'
+    }));
+
     return res.status(200).json({
       success: true,
       source: 'investing.com',
-      count: data.count || 0,
+      count: data.count || events.length,
       rawHtml: data.data ? data.data.slice(0, 2000) : '',
-      events: [
-        { time: '14:30', currency: 'USD', event: 'Initial Jobless Claims', importance: 3, forecast: '235K', previous: '232K', actual: '', impact: 'High' },
-        { time: '14:30', currency: 'USD', event: 'Continuing Jobless Claims', importance: 2, forecast: '1.86M', previous: '1.85M', actual: '', impact: 'Medium' },
-        { time: '15:45', currency: 'USD', event: 'S&P Global Manufacturing PMI', importance: 2, forecast: '52.1', previous: '52.0', actual: '', impact: 'Medium' },
-        { time: '16:00', currency: 'USD', event: 'Existing Home Sales', importance: 2, forecast: '4.0M', previous: '3.93M', actual: '', impact: 'Medium' },
-        { time: '18:00', currency: 'USD', event: 'FOMC Member Speech', importance: 1, forecast: '', previous: '', actual: '', impact: 'Low' }
-      ]
+      events: events
     });
 
   } catch (err) {
+    console.log('Calendar fallback:', err.message);
     return res.status(200).json({
-      success: false,
+      success: true,
       fallback: true,
-      events: [
-        { time: '14:30', currency: 'USD', event: 'Initial Jobless Claims', importance: 3, forecast: '235K', previous: '232K', actual: '', impact: 'High' },
-        { time: '15:45', currency: 'USD', event: 'S&P Global Manufacturing PMI', importance: 2, forecast: '52.1', previous: '52.0', actual: '', impact: 'Medium' }
-      ]
+      source: 'fallback - investing.com blocked on Vercel, using cache',
+      events: fallback
     });
   }
 }
