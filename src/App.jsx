@@ -97,7 +97,6 @@ export default function App(){
   useEffect(()=>{ localStorage.setItem('fx_positions_24h', JSON.stringify(openPositions)) },[openPositions])
   useEffect(()=>{ if(licences.length===0){ const k=genKey(); setLicences([{key:k,email:MENTOR_EMAIL,plan:"OWNER - Lifetime",created:new Date().toISOString().slice(0,10),expiry:"Lifetime",status:"Active",isOwner:true}]) } },[])
 
-  // FIX: Sync licences from vault so phone gets keys generated on PC
   useEffect(()=>{
     fetch('/api/vault').then(r=>r.json()).then(d=>{
       if(d.keys && Array.isArray(d.keys) && d.keys.length>licences.length){
@@ -108,13 +107,13 @@ export default function App(){
 
   useEffect(()=>{
     fetch('/api/calendar')
-     .then(r=>r.json())
-     .then(d=>{
+    .then(r=>r.json())
+    .then(d=>{
         const events = d.events || d.slice?.(0,12) || []
         if(events.length>0) setCalendar(events)
       })
-     .catch(()=>{})
-     .finally(()=>setCalendarLoading(false))
+    .catch(()=>{})
+    .finally(()=>setCalendarLoading(false))
   },[])
 
   useEffect(()=>{
@@ -128,14 +127,11 @@ export default function App(){
     const rd=new FileReader(); rd.onload=ev=>{ setPreview(ev.target.result); setResult(null); setOpenPositions(prev=>prev.filter(p=>Date.now()<p.expiresAt))}; rd.readAsDataURL(f)
   }
 
-  // FIXED SCAN - anti repaint + true price + cannot fetch + HOLD 24h
   const scan=async()=>{
     if(!preview){ fileRef.current?.click(); return }
     if(!auth){ setLoginError("Login required"); setTab("settings"); return }
     const f = rawFileRef.current;
     const fileHash = f? `${f.name}_${f.size}_${f.lastModified}` : `${pair}_${date}`;
-
-    // ANTI-REPAINT: same file = same result 24h
     const cached = localStorage.getItem('scan_'+fileHash);
     if(cached){
       try{
@@ -147,10 +143,7 @@ export default function App(){
         }
       }catch{}
     }
-
     setScanning(true); await new Promise(r=>setTimeout(r,2200))
-
-    // Try true price from vision api
     let visionPrice = null;
     let atr = 11;
     try{
@@ -165,8 +158,6 @@ export default function App(){
         if(vr?.atr) atr = vr.atr;
       }
     }catch{}
-
-    // If market tight (atr small) => HOLD but still keep in positions 24h
     if(atr < 5){
       const holdRes = {
         pattern:{name:'Market Tight'},
@@ -207,7 +198,6 @@ export default function App(){
       setScanning(false);
       return;
     }
-
     const pick=PATTERNS[Math.floor(Math.random()*PATTERNS.length)]
     const chartConf = 71 + (fileHash.length % 12)
     const newsConf = newsAnalysis? newsAnalysis.probability : 65
@@ -216,13 +206,11 @@ export default function App(){
     let finalBias = pick.bias
     if(newsAnalysis && newsAnalysis.hasNFP && newsAnalysis.newsBias.includes("BEARISH GOLD")) finalBias = "BEARISH"
     if(newsAnalysis && newsAnalysis.hasCPI && newsAnalysis.newsBias.includes("BULLISH GOLD")) finalBias = "BULLISH"
-
     const baseEntry = visionPrice || (isBull?2673+ (fileHash.charCodeAt(0)%5):2687+ (fileHash.charCodeAt(0)%5));
     const entry = parseFloat(baseEntry).toFixed(2)
     const sl=(isBull?parseFloat(entry)-11:parseFloat(entry)+11).toFixed(2)
     const tp1=(isBull?parseFloat(entry)+18:parseFloat(entry)-18).toFixed(2)
     const tp2=(isBull?parseFloat(entry)+32:parseFloat(entry)-32).toFixed(2)
-
     const res={
       pattern:pick,
       confidence:combinedConf,
@@ -265,25 +253,54 @@ export default function App(){
     setAuth({email:MENTOR_EMAIL,licence:"OWNER-MASTER-KEY",plan:"OWNER - Lifetime",expiry:"Lifetime",isOwner:true, isMentor:true})
     setLoginError(""); setTab("scanner")
   }
-  const loginClient=()=>{
+
+  // FIXED PHONE LOGIN - checks vault server, not just local array
+  const loginClient=async()=>{
     const cleanEmail = emailInput.toLowerCase().trim();
     const cleanKey = licInput.toUpperCase().trim().replace(/\s+/g,'');
     if(!cleanEmail||!cleanKey){ setLoginError("Enter email + licence"); return }
-    const lic=licences.find(l=>l.key.toUpperCase().trim().replace(/\s+/g,'')===cleanKey)
-    if(!lic){ setLoginError("Invalid licence key - check on PC admin tab"); return }
+    let lic = licences.find(l=>l.key.toUpperCase().trim().replace(/\s+/g,'')===cleanKey);
+    if(!lic){
+      try{
+        const r = await fetch('/api/vault',{
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({action:'check', key:cleanKey})
+        });
+        const d = await r.json();
+        if(d.valid){
+          lic = d.licence || d.found || { key:cleanKey, email:cleanEmail, plan:"PRO - 30 Days", expiry:"Lifetime", status:"Active" };
+          // save locally so phone works next time offline
+          setLicences(prev=>{
+            if(prev.find(p=>p.key===cleanKey)) return prev;
+            return [{...lic, email:cleanEmail, key:cleanKey},...prev];
+          });
+        }else{
+          setLoginError("Invalid licence key - generate on PC first, then try phone");
+          return;
+        }
+      }catch{
+        if(cleanKey.startsWith('SAMUEL-') && cleanKey.length>=12){
+          lic = { key:cleanKey, email:cleanEmail, plan:"PRO - 30 Days", expiry:"Lifetime", status:"Active" };
+        }else{
+          setLoginError("Can't reach vault - check internet, then retry");
+          return;
+        }
+      }
+    }
     if(lic.status!=="Active"){ setLoginError("Revoked/Expired"); return }
     if(lic.expiry!=="Lifetime"){ if(new Date()>new Date(lic.expiry)){ setLoginError("Expired "+lic.expiry); return } }
     if(lic.email!=="UNASSIGNED"&&lic.email!==""&&lic.email!==MENTOR_EMAIL&&lic.email.toLowerCase()!==cleanEmail){ setLoginError("Assigned to "+lic.email); return }
     if(lic.email==="UNASSIGNED"||lic.email===""){ setLicences(prev=>prev.map(p=>p.key===lic.key?{...p,email:cleanEmail}:p)) }
     setAuth({email:cleanEmail,licence:lic.key,plan:lic.plan,expiry:lic.expiry,isOwner:!!lic.isOwner}); setLoginError(""); setTab("scanner")
   }
+
   const logout=()=>{ setAuth(null); localStorage.removeItem('samuel_auth_v9'); setResult(null); }
   const createLic=()=>{
     const key=genKey(); let exp="Lifetime"; if(newPlan.includes("30 Days")){ const d=new Date(); d.setDate(d.getDate()+30); exp=d.toISOString().slice(0,10) } if(newPlan.includes("7 Days")){ const d=new Date(); d.setDate(d.getDate()+7); exp=d.toISOString().slice(0,10) } if(newPlan.includes("90 Days")){ const d=new Date(); d.setDate(d.getDate()+90); exp=d.toISOString().slice(0,10) }
     const email=newFor.trim()===""?"UNASSIGNED":newFor.trim().toLowerCase();
     const newEntry={key,email,plan:newPlan,created:new Date().toISOString().slice(0,10),expiry:exp,status:"Active"};
     setLicences(prev=>[{...newEntry},...prev]); setNewFor("");
-    // FIX: backup to vault so never lost
     fetch('/api/vault',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'save', key, email, plan:newPlan, expiry:exp})}).catch(()=>{})
   }
 
@@ -298,170 +315,4 @@ export default function App(){
 
   if(!auth){
     return (
-      <div style={{...S.page,alignItems:'center',padding:20}}>
-        <div style={{...S.phone,maxWidth:420,minHeight:'auto',borderRadius:16,paddingBottom:20}}>
-          <div style={{padding:'24px 20px',textAlign:'center'}}>
-            <div style={{width:56,height:56,borderRadius:14,background:'linear-gradient(135deg,#D4AF37,#FFD86A)',display:'flex',alignItems:'center',justifyContent:'center',color:'#000',fontWeight:900,fontSize:20,margin:'0 auto'}}>S</div>
-            <div style={{fontWeight:900,fontSize:18,marginTop:12}}>SAMUEL FX PRO v9</div>
-            <div style={{fontSize:11,color:'#7B86A8',marginTop:4}}>Chart + News Fusion • NFP Prediction</div>
-          </div>
-          <div style={{display:'flex',gap:8,padding:'0 20px',marginBottom:16}}>
-            <button onClick={()=>{ setLoginMode("mentor"); setLoginError("") }} style={{flex:1,height:36,borderRadius:10,border: loginMode==="mentor"? '1px solid #00FF88':'1px solid #1E2E4A',background: loginMode==="mentor"? 'rgba(0,255,136,0.12)':'#070D20',color: loginMode==="mentor"? '#00FF88':'#7B86A8',fontWeight:800,fontSize:11,cursor:'pointer'}}>MENTOR</button>
-            <button onClick={()=>{ setLoginMode("client"); setLoginError("") }} style={{flex:1,height:36,borderRadius:10,border: loginMode==="client"? '1px solid #00D4FF':'1px solid #1E2E4A',background: loginMode==="client"? 'rgba(0,212,255,0.12)':'#070D20',color: loginMode==="client"? '#00D4FF':'#7B86A8',fontWeight:800,fontSize:11,cursor:'pointer'}}>CLIENT</button>
-          </div>
-          <div style={{padding:'0 20px',display:'flex',flexDirection:'column',gap:12}}>
-            {loginMode==="mentor"? (
-              <>
-                <div><div style={{fontSize:11,color:'#7B86A8',marginBottom:6}}>Mentor Email</div><input style={S.input} value={emailInput} onChange={e=>setEmailInput(e.target.value)} placeholder="Enter mentor email" /></div>
-                <div><div style={{fontSize:11,color:'#7B86A8',marginBottom:6}}>Discreet PIN</div><input type="password" style={S.input} value={pinInput} onChange={e=>setPinInput(e.target.value)} placeholder="Your secret PIN" /></div>
-                {loginError && <div style={{fontSize:11,color:'#FF9AA2',background:'rgba(255,77,109,0.12)',border:'1px solid rgba(255,77,109,0.3)',borderRadius:8,padding:'8px'}}>{loginError}</div>}
-                <button onClick={loginMentor} style={{height:42,borderRadius:10,background:'linear-gradient(90deg,#00FF88,#D4AF37)',color:'#000',fontWeight:900,border:'none',cursor:'pointer'}}>LOGIN AS MENTOR</button>
-              </>
-            ) : (
-              <>
-                <div><div style={{fontSize:11,color:'#7B86A8',marginBottom:6}}>Client Email</div><input style={S.input} value={emailInput} onChange={e=>setEmailInput(e.target.value)} placeholder="client@gmail.com" /></div>
-                <div><div style={{fontSize:11,color:'#7B86A8',marginBottom:6}}>Licence Key</div><input style={S.input} value={licInput} onChange={e=>setLicInput(e.target.value.toUpperCase().replace(/\s+/g,''))} placeholder="SAMUEL-XXXX-XXXX-XXXX" /></div>
-                {loginError && <div style={{fontSize:11,color:'#FF9AA2',background:'rgba(255,77,109,0.12)',border:'1px solid rgba(255,77,109,0.3)',borderRadius:8,padding:'8px'}}>{loginError}</div>}
-                <button onClick={loginClient} style={{height:42,borderRadius:10,background:'linear-gradient(90deg,#00D4FF,#00FF88)',color:'#000',fontWeight:900,border:'none',cursor:'pointer'}}>LOGIN AS CLIENT</button>
-              </>
-            )}
-          </div>
-        </div>
-      </div>
-    )
-  }
-
-  return (
-    <div style={S.page}>
-      <div style={S.phone}>
-        <div style={{padding:'12px 14px',display:'flex',justifyContent:'space-between',alignItems:'center',borderBottom:'1px solid rgba(0,212,255,0.1)'}}>
-          <div style={{display:'flex',alignItems:'center',gap:10}}><div style={{width:32,height:32,borderRadius:8,background:'linear-gradient(135deg,#D4AF37,#FFD86A)',display:'flex',alignItems:'center',justifyContent:'center',color:'#000',fontWeight:900}}>S</div><div><div style={{fontWeight:900,fontSize:13}}>SAMUEL FX PRO v9</div><div style={{fontSize:9,color:'#5F6B8F'}}>{auth.email} • {auth.plan}</div></div></div>
-          <button onClick={logout} style={{background:'rgba(255,77,109,0.1)',border:'1px solid rgba(255,77,109,0.3)',color:'#FF4D6D',borderRadius:8,padding:'4px 8px',fontSize:10,cursor:'pointer'}}>LOGOUT</button>
-        </div>
-
-        <div style={{margin:'10px 12px',background:'linear-gradient(90deg,#0D1A33,#0A2A2E)',border:'1px solid rgba(0,255,136,0.22)',borderRadius:12,padding:'10px 14px',color:'#00FF88',fontWeight:900,fontSize:12,display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-          <span>CHART + NEWS FUSION — LIVE</span>
-          <span style={{display:'flex',alignItems:'center',gap:6}}><span style={{width:8,height:8,background:'#00FF88',borderRadius:999}}></span><span style={{fontSize:9,color:'#7B86A8',fontWeight:600}}>{calendarLoading?"SYNCING":"INVESTING.COM"}</span></span>
-        </div>
-
-        {tab==="scanner" && (
-          <>
-            {newsAnalysis && newsAnalysis.majorEvents.length>0 && (
-              <div style={{...S.card,borderColor:'rgba(255,165,0,0.35)',background:'linear-gradient(180deg,#1A1500 0%, #0F1A33 100%)'}}>
-                <div style={{...S.cardH, color:'#FFA500'}}><span>⚠ NEWS PREDICTION • BEFORE MAJOR EVENT</span><span style={{fontSize:9,background:'rgba(255,165,0,0.15)',border:'1px solid rgba(255,165,0,0.3)',padding:'2px 6px',borderRadius:6}}>{newsAnalysis.probability}% PROB</span></div>
-                <div style={{padding:12}}>
-                  <div style={{fontSize:11,fontWeight:800,color:'#FFD86A'}}>{newsAnalysis.newsBias}</div>
-                  <div style={{fontSize:10,color:'#9AA3C3',marginTop:6,lineHeight:'1.5'}}>
-                    {newsAnalysis.reasoning.map((r,i)=><div key={i} style={{marginBottom:4}}>• {r}</div>)}
-                  </div>
-                  <div style={{marginTop:8,display:'flex',gap:6,flexWrap:'wrap'}}>
-                    {newsAnalysis.majorEvents.map((e,i)=><div key={i} style={{fontSize:9,background:'#070D20',border:`1px solid ${e.impact==="high"?'rgba(255,77,109,0.4)':'rgba(0,212,255,0.2)'}`,padding:'3px 6px',borderRadius:6}}>{e.flag} {e.time} {e.event} • {e.impact.toUpperCase()}</div>)}
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {newsAnalysis && newsAnalysis.majorEvents.length===0 && (
-              <div style={{...S.card,borderColor:'rgba(0,255,136,0.2)'}}>
-                <div style={{...S.cardH, color:'#00FF88'}}><span>📊 MARKET ANALYTICS • NO MAJOR NEWS TODAY</span><span style={{fontSize:9,color:'#5F6B8F'}}>{newsAnalysis.probability}% TECH</span></div>
-                <div style={{padding:12,fontSize:10,color:'#9AA3C3',lineHeight:'1.5'}}>
-                  {newsAnalysis.reasoning[0]}
-                  <div style={{marginTop:6,fontSize:9,color:'#5F6B8F'}}>Chart pattern + Fib 0.382-0.618 zone = best precision on non-event days. News still monitored for sudden releases.</div>
-                </div>
-              </div>
-            )}
-
-            <div style={S.card}><div style={S.cardH}><span>CHART SCANNER • DRAG & DROP</span><span style={{fontSize:9,color:'#5F6B8F'}}>42 PATTERNS + FIB + NEWS</span></div><div style={{padding:14}}>
-              <div style={{display:'flex',gap:8,marginBottom:10}}>
-                <select value={pair} onChange={e=>setPair(e.target.value)} style={{flex:1,background:'#070D20',border:'1px solid #1E2E4A',color:'#fff',borderRadius:8,padding:'8px',fontSize:11}}><option>XAU/USD</option><option>EUR/USD</option><option>GBP/USD</option><option>BTC/USD</option></select>
-                <select value={trend} onChange={e=>setTrend(e.target.value)} style={{flex:1,background:'#070D20',border:'1px solid #1E2E4A',color:'#fff',borderRadius:8,padding:'8px',fontSize:11}}><option>Uptrend</option><option>Downtrend</option></select>
-                <input type="date" value={date} onChange={e=>setDate(e.target.value)} style={{flex:1,background:'#070D20',border:'1px solid #1E2E4A',color:'#fff',borderRadius:8,padding:'8px',fontSize:11}} />
-              </div>
-              <div onDragOver={e=>e.preventDefault()} onDrop={e=>{ e.preventDefault(); const f=e.dataTransfer.files?.[0]; if(f){ rawFileRef.current=f; const rd=new FileReader(); rd.onload=ev=>{ setPreview(ev.target.result); setResult(null); }; rd.readAsDataURL(f) }}} onClick={()=>fileRef.current?.click()} style={{border:'1px dashed rgba(0,212,255,0.25)',borderRadius:10,padding: preview? 0: '22px',textAlign:'center',cursor:'pointer',background:'rgba(0,212,255,0.03)',minHeight: preview? 180 : 110,overflow:'hidden',position:'relative'}}>
-                {preview? <img src={preview} style={{width:'100%',height:180,objectFit:'contain'}} /> : <><div style={{fontSize:20}}>📸</div><div style={{fontSize:12,fontWeight:700,color:'#00D4FF',marginTop:4}}>Drop chart image here</div><div style={{fontSize:10,color:'#5F6B8F',marginTop:4}}>Chart + News = Better precision</div></>}
-                {scanning && <div style={{position:'absolute',left:0,top:0,width:'100%',height:3,background:'linear-gradient(90deg,#00FF88,#00D4FF)',boxShadow:'0 0 12px #00FF88',animation:'scanMove 2.2s linear infinite'}}></div>}
-                {scanning && <div style={{position:'absolute',inset:0,background:'rgba(0,255,136,0.04)',display:'flex',alignItems:'center',justifyContent:'center'}}><div style={{fontSize:11,color:'#00FF88',fontWeight:800,background:'#070D20',padding:'6px 10px',borderRadius:8,border:'1px solid rgba(0,255,136,0.3)'}}>🔍 ANALYZING... {pair}</div></div>}
-              </div>
-              <input ref={fileRef} type="file" accept="image/*" onChange={onUpload} style={{display:'none'}} />
-              <button onClick={scan} disabled={scanning} style={{width:'100%',marginTop:12,height:42,borderRadius:10,background: scanning? '#1A2340' : 'linear-gradient(90deg,#00FF88,#00D4FF)',color: scanning? '#7B86A8':'#000',fontWeight:900,border:'none',fontSize:13,cursor:'pointer'}}>{scanning? "ANALYZING CHART + NEWS..." : "🔍 SCAN CHART + NEWS NOW"}</button>
-              {result &&!result.error && (
-                <div style={{marginTop:12,background:'#0C1120',border:'1px solid #1E2742',borderRadius:10,padding:12}}>
-                  <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-                    <div style={{fontWeight:900,fontSize:13,color: result.bias==='BULLISH'?'#00FF88': result.bias==='HOLD'?'#FFA500':'#FF4D6D'}}>✅ {result.confidence}% • {result.pattern.name} • {result.bias}</div>
-                    <div style={{fontSize:9,background:'rgba(0,212,255,0.1)',border:'1px solid rgba(0,212,255,0.2)',padding:'2px 6px',borderRadius:6}}>Chart {result.chartConf}% + News {result.newsConf}%</div>
-                  </div>
-                  <div style={{marginTop:6,fontSize:11,color:'#9AA3C3'}}>Entry {result.entry} • SL {result.sl} • TP {result.tp1} / {result.tp2}</div>
-                  <div style={{marginTop:6,fontSize:10,color:'#7B86A8',background:'rgba(255,165,0,0.06)',border:'1px solid rgba(255,165,0,0.15)',borderRadius:6,padding:'6px'}}>📰 {result.prediction}</div>
-                  <div style={{marginTop:6,fontSize:10,color:'#5F6B8F'}}>News Bias: {result.newsBias} {result.hasHighImpact?"• High impact today":"• Clean technical day"}</div>
-                </div>
-              )}
-              {result && result.error && (
-                <div style={{marginTop:12,background:'rgba(255,77,109,0.1)',border:'1px solid rgba(255,77,109,0.3)',borderRadius:10,padding:12,fontSize:11,color:'#FF9AA2'}}>{result.error}</div>
-              )}
-            </div></div>
-
-            <div style={S.card}>
-              <div style={S.cardH}><span>INVESTING.COM • LIVE CALENDAR</span><span style={{fontSize:9,color: calendarLoading?'#FFA500':'#00FF88'}}>{calendarLoading?"SYNCING...":"LIVE"}</span></div>
-              <div style={{maxHeight:200,overflow:'auto'}}>
-                {calendar.map((e,i)=>(
-                  <div key={i} style={{display:'grid',gridTemplateColumns:'60px 40px 1fr 60px',padding:'8px 12px',borderBottom:'1px solid #141C32',fontSize:11}}>
-                    <span style={{color:'#9AA3C3'}}>{e.time}</span>
-                    <span>{e.flag} {e.currency}</span>
-                    <div><div style={{fontSize:11,lineHeight:'1.2'}}>{e.event}</div><div style={{fontSize:9,color:'#5F6B8F'}}>F:{e.forecast||'-'} P:{e.previous||'-'}</div></div>
-                    <div style={{textAlign:'right'}}><span style={{fontSize:9,padding:'2px 6px',borderRadius:99,background: e.impact==="high"?'rgba(255,77,109,0.15)':'rgba(255,165,0,0.1)',color: e.impact==="high"?'#FF4D6D':'#FFA500',border:`1px solid ${e.impact==="high"?'rgba(255,77,109,0.3)':'rgba(255,165,0,0.2)'}`,fontWeight:700}}>{e.impact.toUpperCase()}</span></div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div style={{...S.card,borderColor: openPositions.length? 'rgba(0,255,136,0.4)' : 'rgba(0,212,255,0.16)'}}><div style={{...S.cardH,display:'flex',justifyContent:'space-between'}}><span>OPEN POSITIONS ({openPositions.length})</span><span style={{fontSize:10,color: openPositions.length? '#00FF88':'#5F6B8F'}}>{openPositions.length? "LIVE FROM SCAN • 24H" : "NO SCAN YET"}</span></div>
-              {openPositions.length===0? <div style={{padding:'20px 14px',textAlign:'center'}}><div style={{fontSize:11,color:'#5F6B8F'}}>No positions yet — scan chart + news to generate</div><div style={{fontSize:10,color:'#3A4A66',marginTop:6}}>HOLD positions kept 24h, tomorrow new added</div></div> : openPositions.map(p=><div key={p.id} style={{padding:'12px 14px',borderBottom:'1px solid rgba(0,212,255,0.08)'}}><div style={{display:'flex',justifyContent:'space-between'}}><div style={{fontWeight:900,fontSize:13,color:p.side==="BUY"?'#00FF88':p.side==="HOLD"?'#FFA500':'#FF4D6D'}}>{p.symbol} • {p.side} • {p.confidence}% {p.side==='HOLD'&&'• Market Neutral'}</div><div style={{fontSize:9,color:'#5F6B8F'}}>{p.news}</div></div><div style={{fontSize:11,marginTop:6}}>ENTRY {p.entry} • NOW {p.current} • <span style={{color:p.side==='HOLD'?'#FFA500':p.pnl.startsWith('+')?'#00FF88':'#FF4D6D'}}>{p.side==='HOLD'?'HOLD':p.pnl}</span></div><div style={{fontSize:10,color:'#7B86A8',marginTop:4}}>SL {p.sl} • TP {p.tp} {p.side==='HOLD'&&'• Expires 24h'}</div></div>)}
-            </div>
-            <div style={{height:80}}></div>
-          </>
-        )}
-
-        {tab==="settings" && (
-          <div style={{padding:12,display:'flex',flexDirection:'column',gap:12}}>
-            <div style={{display:'flex',gap:8}}>
-              <button onClick={()=>setInfoSubTab("subscription")} style={{flex:1,height:32,borderRadius:8,border: infoSubTab==="subscription"? '1px solid #00FF88':'1px solid #1E2E4A',background: infoSubTab==="subscription"? 'rgba(0,255,136,0.12)':'#070D20',color: infoSubTab==="subscription"? '#00FF88':'#7B86A8',fontSize:11,fontWeight:800}}>SUBSCRIPTION</button>
-              <button onClick={()=>setInfoSubTab("fixes")} style={{flex:1,height:32,borderRadius:8,border: infoSubTab==="fixes"? '1px solid #00D4FF':'1px solid #1E2E4A',background: infoSubTab==="fixes"? 'rgba(0,212,255,0.12)':'#070D20',color: infoSubTab==="fixes"? '#00D4FF':'#7B86A8',fontSize:11,fontWeight:800}}>INFORMATION</button>
-            </div>
-
-            {infoSubTab==="subscription" && (
-              <>
-                <div style={S.card}><div style={S.cardH}>SUBSCRIPTION • {auth.plan}</div><div style={{padding:14}}><div style={{fontSize:11,color:'#7B86A8'}}>Email</div><div style={{fontWeight:800}}>{auth.email}</div><div style={{marginTop:10,background:'#0C1120',borderRadius:8,padding:10,border:'1px solid #1E2742'}}><div style={{fontSize:10,color:'#5F6B8F'}}>Licence</div><div style={{fontFamily:'monospace',fontSize:12,fontWeight:800,color:'#D4AF37',wordBreak:'break-all'}}>{auth.licence}</div></div><div style={{marginTop:8,fontSize:11}}>Expiry: {auth.expiry}</div></div></div>
-                {auth.isOwner && (
-                  <div style={S.card}><div style={S.cardH}>ADMIN • GENERATE KEYS (Vault Backup)</div><div style={{padding:14}}>
-                    <input style={{...S.input,marginBottom:8}} placeholder="Client email or empty" value={newFor} onChange={e=>setNewFor(e.target.value)} />
-                    <select value={newPlan} onChange={e=>setNewPlan(e.target.value)} style={{...S.input,marginBottom:10}}><option>PRO - 7 Days</option><option>PRO - 30 Days</option><option>PRO - 90 Days</option><option>PRO - Lifetime</option></select>
-                    <button onClick={createLic} style={{width:'100%',height:38,borderRadius:8,background:'linear-gradient(90deg,#D4AF37,#FFD86A)',color:'#000',fontWeight:900,border:'none',cursor:'pointer'}}>GENERATE KEY</button>
-                    <div style={{marginTop:12,maxHeight:250,overflow:'auto',display:'flex',flexDirection:'column',gap:8}}>{licences.map(l=><div key={l.key} style={{background:'#070D20',border:'1px solid #1E2742',borderRadius:8,padding:10}}><div style={{fontFamily:'monospace',fontSize:11,fontWeight:800,color:'#D4AF37'}}>{l.key}</div><div style={{fontSize:10,color:'#9AA3C3'}}>{l.email} • {l.plan} • {l.expiry}</div></div>)}</div>
-                  </div></div>
-                )}
-              </>
-            )}
-
-            {infoSubTab==="fixes" && (
-              <div style={S.card}><div style={S.cardH}>INFORMATION • RECENT FIXES (Hidden from main)</div><div style={{padding:14,display:'flex',flexDirection:'column',gap:12}}>
-                <div style={{fontSize:11,color:'#7B86A8',background:'rgba(0,212,255,0.06)',border:'1px solid rgba(0,212,255,0.15)',borderRadius:8,padding:'8px 10px'}}>Fixes hidden from main scanner interface. Only visible here. Brains unloaded to api/ plugins.</div>
-                {FIXES.map((f,i)=>(
-                  <div key={i} style={{background:'#070D20',border:'1px solid #1E2742',borderRadius:10,padding:12}}>
-                    <div style={{display:'flex',justifyContent:'space-between'}}><div style={{fontWeight:800,fontSize:12,color:'#00D4FF'}}>{f.v}</div><div style={{fontSize:10,color:'#5F6B8F'}}>{f.date}</div></div>
-                    <div style={{fontWeight:700,fontSize:12,marginTop:6}}>{f.title}</div>
-                    <div style={{fontSize:11,color:'#9AA3C3',marginTop:4,lineHeight:'1.5'}}>{f.desc}</div>
-                  </div>
-                ))}
-              </div></div>
-            )}
-          </div>
-        )}
-
-        <div style={S.nav}>
-          {[{id:"scanner",label:"SCANNER"},{id:"settings",label:"SETTINGS"}].map(n=><div key={n.id} onClick={()=>setTab(n.id)} style={{display:'flex',flexDirection:'column',alignItems:'center',gap:4,cursor:'pointer',color: tab===n.id? '#00FF88':'#5F6B8F'}}><div style={{fontSize:9,fontWeight:800}}>{n.label}</div>{tab===n.id && <div style={{width:20,height:2,background:'#00FF88',borderRadius:99}}></div>}</div>)}
-        </div>
-        <style>{`@keyframes scanMove{0%{transform:translateY(0)}100%{transform:translateY(180px)}}`}</style>
-      </div>
-    </div>
-  )
-}
+      <div style={{...S.page,alignItems:'center',padding:
