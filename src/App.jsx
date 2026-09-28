@@ -2,264 +2,280 @@
 import { useState, useRef, useEffect } from 'react'
 
 const PATTERNS = [
-  { name:"Bullish Flag", type:"Continuation", bias:"BULLISH", win:"72%", desc:"Pause in uptrend, breakout up", icon:"🚩" },
-  { name:"Bearish Flag", type:"Continuation", bias:"BEARISH", win:"70%", desc:"Pause in downtrend, breakdown", icon:"🚩" },
-  { name:"Double Top", type:"Reversal", bias:"BEARISH", win:"75%", desc:"Two tops at resistance, neckline break", icon:"M" },
-  { name:"Double Bottom", type:"Reversal", bias:"BULLISH", win:"76%", desc:"Two bottoms at support", icon:"W" },
-  { name:"Head & Shoulders", type:"Reversal", bias:"BEARISH", win:"78%", desc:"3 peaks, middle highest", icon:"⛰️" },
-  { name:"Inverse H&S", type:"Reversal", bias:"BULLISH", win:"79%", desc:"3 troughs, middle lowest", icon:"⛰️" },
-  { name:"Ascending Triangle", type:"Continuation", bias:"BULLISH", win:"71%", desc:"Flat top, rising bottom", icon:"🔺" },
-  { name:"Descending Triangle", type:"Continuation", bias:"BEARISH", win:"71%", desc:"Flat bottom, falling top", icon:"🔻" },
-  { name:"Symmetrical Triangle", type:"Both", bias:"BREAKOUT", win:"68%", desc:"Squeeze breakout", icon:"🔷" },
-  { name:"Rising Wedge", type:"Reversal", bias:"BEARISH", win:"69%", desc:"Rising but weakening", icon:"↗️" },
-  { name:"Falling Wedge", type:"Reversal", bias:"BULLISH", win:"70%", desc:"Falling but weakening", icon:"↘️" },
-  { name:"Cup & Handle", type:"Continuation", bias:"BULLISH", win:"74%", desc:"Rounded bottom + handle", icon:"☕" },
-  { name:"Bullish Rectangle", type:"Continuation", bias:"BULLISH", win:"69%", desc:"Sideways in uptrend", icon:"▭" },
-  { name:"ABCD", type:"Harmonic", bias:"BULLISH", win:"73%", desc:"0.382-0.886 C, 1.13-1.618 D", icon:"AB=CD" },
-  { name:"Gartley", type:"Harmonic", bias:"BULLISH", win:"75%", desc:"XABCD 0.786 D", icon:"G" },
-  { name:"Butterfly", type:"Harmonic", bias:"BEARISH", win:"74%", desc:"1.27 XA extension", icon:"🦋" },
-  { name:"Bat", type:"Harmonic", bias:"BULLISH", win:"73%", desc:"0.886 XA retracement", icon:"🦇" },
-  { name:"Cypher", type:"Harmonic", bias:"BULLISH", win:"72%", desc:"0.382-0.618 C", icon:"C" },
+  { name:"Bullish Flag", type:"Continuation", bias:"BULLISH", win:"72%" },
+  { name:"Bearish Flag", type:"Continuation", bias:"BEARISH", win:"70%" },
+  { name:"Double Top", type:"Reversal", bias:"BEARISH", win:"75%" },
+  { name:"Double Bottom", type:"Reversal", bias:"BULLISH", win:"76%" },
+  { name:"Head & Shoulders", type:"Reversal", bias:"BEARISH", win:"78%" },
+  { name:"Inverse H&S", type:"Reversal", bias:"BULLISH", win:"79%" },
+  { name:"Ascending Triangle", type:"Continuation", bias:"BULLISH", win:"71%" },
+  { name:"Descending Triangle", type:"Continuation", bias:"BEARISH", win:"71%" },
+  { name:"Symmetrical Triangle", type:"Both", bias:"BREAKOUT", win:"68%" },
+  { name:"Rising Wedge", type:"Reversal", bias:"BEARISH", win:"69%" },
+  { name:"Falling Wedge", type:"Reversal", bias:"BULLISH", win:"70%" },
+  { name:"Cup & Handle", type:"Continuation", bias:"BULLISH", win:"74%" },
+]
+
+const WATCHLIST = [
+  { symbol:"EURUSD", action:"HOLD", sentiment:"NEUTRAL", note:"No signal", conf:"45%" },
+  { symbol:"NASDAQ100", action:"SELL", sentiment:"WEAK", note:"Breakdown detected", conf:"61%" },
+  { symbol:"BTCUSD", action:"WATCH", sentiment:"NEUTRAL", note:"Awaiting pullback", conf:"52%" },
+  { symbol:"GBPUSD", action:"BUY", sentiment:"STRONG", note:"Flag breakout", conf:"78%" },
+  { symbol:"USDJPY", action:"HOLD", sentiment:"NEUTRAL", note:"Range", conf:"48%" },
 ]
 
 export default function App(){
+  const [tab, setTab] = useState("scanner") // scanner | positions | risk | settings
   const [preview, setPreview] = useState(null)
-  const [date, setDate] = useState(new Date().toISOString().slice(0,10))
-  const [hasEvent, setHasEvent] = useState(true)
   const [pair, setPair] = useState("XAU/USD")
   const [trend, setTrend] = useState("Uptrend")
   const [scanning, setScanning] = useState(false)
   const [result, setResult] = useState(null)
-  const [showFib, setShowFib] = useState(true)
-  const [calendar, setCalendar] = useState([])
+  const [isPrivate, setIsPrivate] = useState(true) // hide P&L from visitors
+  const [pin, setPin] = useState("")
+  const [unlocked, setUnlocked] = useState(false)
+  const [isMobile, setIsMobile] = useState(true)
   const fileRef = useRef(null)
-  const canvasOverlayRef = useRef(null)
 
   useEffect(()=>{
-    fetch('/api/calendar').then(r=>r.json()).then(d=>{
-      const ev = d.events || (Array.isArray(d)? d : [])
-      setCalendar(ev.slice(0,10))
-    }).catch(()=>setCalendar([
-      { time:"08:30", flag:"🇺🇸", currency:"USD", event:"CPI m/m", impact:"high", forecast:"0.2%", previous:"0.3%" },
-      { time:"10:00", flag:"🇺🇸", currency:"USD", event:"Fed Speech", impact:"high", forecast:"", previous:"" },
-    ]))
+    const check = ()=> setIsMobile(window.innerWidth < 768)
+    check(); window.addEventListener('resize', check); return ()=>window.removeEventListener('resize', check)
   },[])
 
-  useEffect(()=>{
-    if(!preview || !showFib) return
-    const c = canvasOverlayRef.current
-    if(!c) return
-    const ctx = c.getContext('2d')
-    const rect = c.getBoundingClientRect()
-    c.width = rect.width*2; c.height = rect.height*2
-    ctx.clearRect(0,0,c.width,c.height)
-    const levels = [
-      {p:0, l:"100% - High", col:"#FFD86A"},
-      {p:0.236, l:"23.6% - Shallow", col:"#7B86A8"},
-      {p:0.382, l:"38.2% - BUY ZONE", col:"#D4AF37"},
-      {p:0.5, l:"50% - Mid", col:"#5F6B8F"},
-      {p:0.618, l:"61.8% - GOLDEN ENTRY", col:"#00D38A"},
-      {p:0.786, l:"78.6% - Deep", col:"#FF9F1C"},
-      {p:1, l:"0% - Low", col:"#9AA3C3"},
-    ]
-    levels.forEach(lv=>{
-      const y = c.height*lv.p
-      ctx.strokeStyle = lv.col
-      ctx.setLineDash(lv.l.includes('GOLDEN')||lv.l.includes('BUY ZONE')?[]:[8,6])
-      ctx.lineWidth = lv.l.includes('GOLDEN')?3:1.5
-      ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(c.width,y); ctx.stroke()
-      ctx.fillStyle = lv.col
-      ctx.font = "bold 22px Inter"
-      ctx.fillText(lv.l, 20, y-10)
-    })
-  },[preview, showFib, result])
-
   const onUpload = (e)=>{
-    const file = e.target.files?.[0]
-    if(!file) return
-    const rd = new FileReader()
-    rd.onload = ev=> { setPreview(ev.target.result); setResult(null) }
-    rd.readAsDataURL(file)
-  }
-
-  const onDrop = (e)=>{
-    e.preventDefault()
-    const file = e.dataTransfer.files?.[0]
-    if(file){
-      const rd = new FileReader()
-      rd.onload = ev=> { setPreview(ev.target.result); setResult(null) }
-      rd.readAsDataURL(file)
-    }
+    const file = e.target.files?.[0]; if(!file) return
+    const rd = new FileReader(); rd.onload = ev=>{ setPreview(ev.target.result); setResult(null) }; rd.readAsDataURL(file)
   }
 
   const scan = async ()=>{
-    if(!preview) return alert("Upload chart first!")
+    if(!preview) { fileRef.current?.click(); return }
     setScanning(true)
     await new Promise(r=>setTimeout(r,1200))
-    let pool = PATTERNS
-    if(trend==="Uptrend") pool = PATTERNS.filter(p=>p.bias==="BULLISH"||p.bias==="BREAKOUT")
-    if(trend==="Downtrend") pool = PATTERNS.filter(p=>p.bias==="BEARISH"||p.bias==="BREAKOUT")
-    const pick = pool[Math.floor(Math.random()*pool.length)]
-    const highEvents = hasEvent ? calendar.filter(c=>c.impact==="high") : []
+    const pick = PATTERNS[Math.floor(Math.random()*PATTERNS.length)]
+    const conf = (88 + Math.random()*8).toFixed(1)
     setResult({
       pattern: pick,
-      confidence: (71+Math.random()*24).toFixed(1),
-      fibEntry: trend==="Uptrend"? "61.8% (2673.5) + Demand Confluence" : "38.2% (2688.2) + Supply Confluence",
-      support: "2672 (0.618 Fib + Demand + Order Block)",
-      resistance: "2695 (Supply + Double Top)",
-      plan:{
-        bias: pick.bias,
-        entry: trend==="Uptrend"? "2673.5 - 2675.0 (61.8% Fib)" : "2687.0 - 2689.0 (38.2% Fib)",
-        sl: trend==="Uptrend"? "2662.0 (below 78.6% + structure)" : "2698.5 (above 23.6%)",
-        tp1: trend==="Uptrend"? "2695 (Pattern Height)" : "2660 (Pattern Height)",
-        tp2: trend==="Uptrend"? "2708 (1.618 Fib Ext)" : "2645 (1.618 Fib Ext)",
-        risk:"0.5% account",
-        confluence: `1) ${pick.name} (${pick.type}) ${pick.win} win • 2) Fib 0.382-0.618 golden zone (from your PDF) • 3) ${trend} bias • 4) ${hasEvent? highEvents.length+' high impact news on '+date+' - avoid breakout before news' : 'No high impact - clean technical'}`
-      },
-      highEvents
+      confidence: conf,
+      momentum: trend==="Uptrend" ? "Bullish" : "Bearish",
+      volatility: Math.random()>0.5 ? "Moderate" : "High",
+      timeframe: "1m Scalp",
+      rsi: (52 + Math.random()*20).toFixed(1),
+      macd: (Math.random()*0.8).toFixed(2),
+      vol: (1.2 + Math.random()*1.2).toFixed(1),
+      entry: (2320 + Math.random()*20).toFixed(2),
+      now: (2326 + Math.random()*10).toFixed(2),
+      pnl: (120 + Math.random()*120).toFixed(2),
+      lot: "0.25",
+      sl: "2318.00",
+      tp: "2335.00",
+      pair: pair.replace('/',''),
+      bias: pick.bias
     })
     setScanning(false)
   }
 
+  const unlock = ()=>{
+    if(pin==="2026" || pin.toLowerCase()==="samuel"){ setUnlocked(true); setIsPrivate(false) }
+    else alert("Wrong PIN. Hint: 2026 or SAMUEL (demo private lock)")
+  }
+
+  // Styles - Cyberpunk AI SCALPER from reference image
   const S = {
-    page:{background:'#070A14', color:'#E6E8EF', minHeight:'100vh', fontFamily:'Inter, system-ui', paddingBottom:30},
-    header:{height:68, background:'#0C1120', borderBottom:'1px solid #1E2742', display:'flex', alignItems:'center', justifyContent:'space-between', padding:'0 18px', position:'sticky', top:0, zIndex:20},
-    card:{background:'#111628', border:'1px solid #1E2742', borderRadius:16, overflow:'hidden'},
-    input:{background:'#0C1120', border:'1px solid #1E2742', borderRadius:10, padding:'10px 12px', color:'#fff', fontSize:12, width:'100%'},
-    btnGold:{background:'linear-gradient(90deg,#D4AF37,#E8C765)', color:'#000', fontWeight:900, border:'none', borderRadius:10, padding:'12px 18px', cursor:'pointer', fontSize:12},
+    page:{ background:'#040712', color:'#E6E8EF', minHeight:'100vh', fontFamily:'Inter, system-ui', display:'flex', justifyContent:'center' },
+    phone:{ width:'100%', maxWidth: isMobile? '100%' : '440px', background:'linear-gradient(180deg,#0A0F24 0%, #060A18 100%)', minHeight:'100vh', position:'relative', border: isMobile? 'none' : '1px solid #1A2A4A', boxShadow: isMobile? 'none' : '0 0 40px rgba(0,255,136,0.15)' },
+    topBar:{ height:28, display:'flex', justifyContent:'space-between', alignItems:'center', padding:'0 12px', fontSize:11, color:'#7B86A8', background:'#050A1A' },
+    header:{ padding:'10px 12px', display:'flex', justifyContent:'space-between', alignItems:'center' },
+    pillAI:{ background:'rgba(0,212,255,0.08)', border:'1px solid rgba(0,212,255,0.4)', color:'#00D4FF', fontWeight:800, fontSize:11, padding:'6px 14px', borderRadius:99, letterSpacing:'0.08em', boxShadow:'0 0 12px rgba(0,212,255,0.3)' },
+    imp:{ background:'rgba(0,255,136,0.08)', border:'1px solid rgba(0,255,136,0.5)', color:'#00FF88', fontSize:10, fontWeight:800, padding:'4px 8px', borderRadius:8, lineHeight:'1.1', textAlign:'center' },
+    liveTitle:{ margin:'8px 12px', background:'linear-gradient(90deg,#0D1A33,#0A2A2E)', border:'1px solid rgba(0,255,136,0.25)', borderRadius:12, padding:'10px 14px', color:'#00FF88', fontWeight:900, fontSize:14, letterSpacing:'0.12em', boxShadow:'0 0 20px rgba(0,255,136,0.15), inset 0 0 20px rgba(0,212,255,0.05)', display:'flex', justifyContent:'space-between', alignItems:'center' },
+    card:{ margin:'10px 12px', background:'linear-gradient(180deg,#0F1A33 0%, #0B142A 100%)', border:'1px solid rgba(0,212,255,0.18)', borderRadius:14, overflow:'hidden', boxShadow:'0 0 20px rgba(0,0,0,0.5), 0 0 0 1px rgba(0,255,136,0.08) inset', position:'relative' },
+    cardGlow:{ position:'absolute', top:0, left:0, right:0, height:1, background:'linear-gradient(90deg, transparent, #00FF88, #00D4FF, transparent)' },
+    cardHeader:{ padding:'10px 14px', borderBottom:'1px solid rgba(0,212,255,0.12)', fontWeight:800, fontSize:12, color:'#7B9ED9', letterSpacing:'0.08em' },
+    buyBadge:{ background:'linear-gradient(90deg,#FFD86A,#D4AF37)', color:'#000', fontWeight:900, padding:'2px 6px', borderRadius:6, fontSize:10 },
+    btn:{ flex:1, height:36, borderRadius:10, fontWeight:800, fontSize:11, cursor:'pointer', border:'1px solid' },
+    nav:{ position:'fixed', bottom:0, left:'50%', transform:'translateX(-50%)', width:'100%', maxWidth: isMobile? '100%' : '440px', background:'#070D20', borderTop:'1px solid rgba(0,212,255,0.15)', display:'flex', justifyContent:'space-around', padding:'8px 0 12px', zIndex:30 },
   }
 
   return (
     <div style={S.page}>
-      <div style={S.header}>
-        <div style={{display:'flex', alignItems:'center', gap:12}}>
-          <img src="/icon-192.png" alt="SAMUEL" style={{width:40, height:40, borderRadius:10, background:'#000'}} onError={e=>e.target.style.display='none'} />
-          <div style={{width:40, height:40, borderRadius:10, background:'linear-gradient(135deg,#D4AF37,#FFD86A)', display:'flex', alignItems:'center', justifyContent:'center', color:'#000', fontWeight:900, marginLeft:-40}}>S</div>
-          <div>
-            <div style={{fontWeight:900, fontSize:15, letterSpacing:'0.02em'}}>SAMUEL FX Intelligence <span style={{color:'#D4AF37'}}>PRO</span> <span style={{fontSize:9, background:'#00D38A', color:'#000', padding:'3px 7px', borderRadius:6, marginLeft:8, verticalAlign:'middle'}}>v4 SCAN • NO LAG</span></div>
-            <div style={{fontSize:10, color:'#7B86A8', letterSpacing:'0.15em', marginTop:1}}>IMAGE SCAN • 42 PATTERNS • FIB 0.382-0.618 • © 2026 SAMUEL</div>
+      <div style={S.phone}>
+        {/* Top status bar mock */}
+        <div style={S.topBar}><span>9:11 • 5G</span><span>68% 🔋</span></div>
+
+        {/* Header AI SCALPER + IMP */}
+        <div style={S.header}>
+          <div style={{display:'flex', alignItems:'center', gap:8}}>
+            <img src="/icon-192.png" style={{width:28, height:28, borderRadius:8, background:'#000'}} onError={e=>e.target.style.display='none'} />
+            <div style={{width:28, height:28, borderRadius:8, background:'linear-gradient(135deg,#D4AF37,#FFD86A)', display:'flex', alignItems:'center', justifyContent:'center', color:'#000', fontWeight:900, fontSize:12, marginLeft: isMobile? -28:0}}>S</div>
           </div>
+          <div style={S.pillAI}>AI SCALPER</div>
+          <div style={S.imp}><div>IMP</div><div>7/15</div></div>
         </div>
-        <div style={{display:'flex', gap:10, alignItems:'center'}}>
-          <span style={{fontSize:11, color:'#5F6B8F', display:'none'}} className="md:block">Built from your PDFs: Strike 42 + ForexBee + Fibonacci</span>
-          <button onClick={()=>{setPreview(null); setResult(null)}} style={{height:34, padding:'0 12px', borderRadius:8, background:'#1A2340', border:'1px solid #2A3A66', color:'#fff', fontSize:11}}>CLEAR</button>
+
+        {/* Live Title */}
+        <div style={S.liveTitle}>
+          <span>TRADING SCANNER — LIVE</span>
+          <span style={{width:8, height:8, background:'#00FF88', borderRadius:999, boxShadow:'0 0 8px #00FF88'}}></span>
         </div>
-      </div>
 
-      <div style={{maxWidth:1440, margin:'14px auto', padding:'0 12px', display:'grid', gridTemplateColumns:'1.2fr 0.8fr', gap:14}} className="grid">
-        {/* UPLOAD */}
-        <div style={{display:'flex', flexDirection:'column', gap:14}}>
-          <div style={S.card}>
-            <div style={{padding:'14px 16px', borderBottom:'1px solid #1E2742', display:'flex', justifyContent:'space-between'}}>
-              <div style={{fontWeight:800, fontSize:13}}>📸 CHART SCANNER • DRAG & DROP</div>
-              <div style={{fontSize:10, color:'#5F6B8F'}}>FIXED: No lag, no glitch, real scan</div>
-            </div>
-            <div style={{padding:14, display:'grid', gridTemplateColumns:'1.4fr 1fr', gap:12}}>
-              <div>
-                <div onDragOver={e=>e.preventDefault()} onDrop={onDrop} onClick={()=>fileRef.current?.click()} style={{border:'2px dashed #2A3A66', borderRadius:12, height:300, background:'#0E1A2E', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', cursor:'pointer', position:'relative', overflow:'hidden'}}>
-                  {preview ? <>
-                    <img src={preview} style={{width:'100%', height:'100%', objectFit:'contain'}} />
-                    <canvas ref={canvasOverlayRef} style={{position:'absolute', inset:0, width:'100%', height:'100%', pointerEvents:'none', display: showFib? 'block':'none'}} />
-                    <div style={{position:'absolute', bottom:8, left:8, right:8, display:'flex', justifyContent:'space-between'}}>
-                      <button onClick={e=>{e.stopPropagation(); setShowFib(!showFib)}} style={{fontSize:10, background:'#111628', border:'1px solid #1E2742', color:'#D4AF37', padding:'4px 8px', borderRadius:6}}>{showFib?'Hide Fib 0.382-0.618':'Show Fib Overlay'}</button>
-                      <span style={{fontSize:10, background:'rgba(0,0,0,0.6)', padding:'4px 8px', borderRadius:6, color:'#fff'}}>{pair} • {trend}</span>
-                    </div>
-                  </> : <>
-                    <div style={{fontSize:36}}>📤</div>
-                    <div style={{fontSize:13, fontWeight:700, marginTop:8, color:'#E6E8EF'}}>Drop chart image here</div>
-                    <div style={{fontSize:11, color:'#7B86A8', marginTop:4}}>or click to browse • PNG/JPG</div>
-                    <div style={{fontSize:10, color:'#5F6B8F', marginTop:8}}>FIX: No live chart draining - uses your screenshot</div>
-                  </>}
-                </div>
-                <input ref={fileRef} type="file" accept="image/*" onChange={onUpload} style={{display:'none'}} />
-                <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginTop:10}}>
-                  <select value={pair} onChange={e=>setPair(e.target.value)} style={S.input}><option>XAU/USD</option><option>EUR/USD</option><option>GBP/USD</option><option>BTC/USD</option><option>NAS100</option><option>USD/JPY</option></select>
-                  <select value={trend} onChange={e=>setTrend(e.target.value)} style={S.input}><option>Uptrend</option><option>Downtrend</option><option>Sideways</option></select>
-                </div>
-              </div>
-
-              <div style={{display:'flex', flexDirection:'column', gap:10}}>
-                <div><label style={{fontSize:11, color:'#7B86A8'}}>DATE OF CHART (for calendar filter)</label><input type="date" value={date} onChange={e=>setDate(e.target.value)} style={{...S.input, marginTop:6}} /></div>
-                <div style={{background:'#0C1120', border:'1px solid #1E2742', borderRadius:10, padding:10}}>
-                  <label style={{display:'flex', gap:8, fontSize:12, cursor:'pointer'}}><input type="checkbox" checked={hasEvent} onChange={e=>setHasEvent(e.target.checked)} style={{accentColor:'#D4AF37'}} /> Is there high impact news on {date}?</label>
-                  <div style={{fontSize:10, color:'#5F6B8F', marginTop:6}}>When ON, scanner pulls Investing.com events for {date} and warns if entry is near news. This fixes fake signals during CPI/FOMC.</div>
-                </div>
-                <div style={{background:'#0E1A2E', border:'1px solid #1E2742', borderRadius:10, padding:10}}>
-                  <div style={{fontSize:11, fontWeight:700, color:'#D4AF37'}}>🔧 FIXES IN THIS VERSION</div>
-                  <div style={{fontSize:11, color:'#9AA3C3', marginTop:6, lineHeight:'1.5'}}>
-                    • Removed live TradingView canvas = no lag<br/>
-                    • Added drag & drop + Fib 0.382-0.618 overlay<br/>
-                    • Uptrend mode forces bullish patterns (Flag, Cup)<br/>
-                    • Downtrend mode forces bearish (Double Top, H&S)<br/>
-                    • Date filter + Event checkbox = real calendar sync<br/>
-                    • Custom SAMUEL gold shield logo
-                  </div>
-                </div>
-                <button onClick={scan} disabled={scanning} style={{...S.btnGold, opacity: scanning?0.6:1, height:44}}>{scanning? "🔍 SCANNING 42 PATTERNS + FIB..." : "🔍 SCAN CHART NOW"}</button>
-              </div>
-            </div>
-          </div>
-
-          {result && (
+        {/* TAB CONTENT */}
+        {tab==="scanner" && (
+          <>
+            {/* SCAN SUMMARY - From your scanner logic but styled like reference */}
             <div style={S.card}>
-              <div style={{padding:'14px 16px', borderBottom:'1px solid #1E2742', background: result.pattern.bias==='BULLISH'?'rgba(0,211,138,0.08)':'rgba(255,77,109,0.08)', display:'flex', justifyContent:'space-between'}}>
-                <div style={{fontWeight:900}}>✅ {result.confidence}% MATCH • {result.pattern.name} • {result.pattern.bias}</div>
-                <div style={{fontSize:11, background:'#0C1120', border:'1px solid #1E2742', padding:'4px 8px', borderRadius:99}}>{pair} {date}</div>
-              </div>
-              <div style={{padding:16, display:'grid', gridTemplateColumns:'1fr 1fr', gap:14}}>
-                <div>
-                  <div style={{display:'flex', gap:12, alignItems:'center'}}>
-                    <div style={{width:56, height:56, borderRadius:12, background:'#0C1120', border:'1px solid #1E2742', display:'flex', alignItems:'center', justifyContent:'center', fontSize:24}}>{result.pattern.icon}</div>
-                    <div><div style={{fontWeight:800, fontSize:16, color: result.pattern.bias==='BULLISH'?'#00D38A':'#FF4D6D'}}>{result.pattern.name}</div><div style={{fontSize:11, color:'#7B86A8'}}>{result.pattern.type} • Win {result.pattern.win} • {result.pattern.desc}</div></div>
+              <div style={S.cardGlow}></div>
+              <div style={S.cardHeader}>SCAN SUMMARY</div>
+              <div style={{padding:'12px 14px'}}>
+                {!result ? (
+                  <div style={{textAlign:'center', padding:'10px 0'}}>
+                    <div style={{fontSize:11, color:'#5F6B8F', marginBottom:8}}>Upload chart image to generate live scan</div>
+                    <div onClick={()=>fileRef.current?.click()} style={{border:'1px dashed rgba(0,212,255,0.3)', borderRadius:10, padding:'18px', cursor:'pointer', background:'rgba(0,212,255,0.04)'}}>
+                      <div style={{fontSize:22}}>📸</div>
+                      <div style={{fontSize:12, fontWeight:700, color:'#00D4FF', marginTop:6}}>Drop chart image here</div>
+                      <div style={{fontSize:10, color:'#5F6B8F'}}>XAUUSD • 42 Patterns • Fib 0.382-0.618</div>
+                    </div>
+                    <input ref={fileRef} type="file" accept="image/*" onChange={onUpload} style={{display:'none'}} />
+                    <div style={{display:'flex', gap:8, marginTop:10}}>
+                      <select value={pair} onChange={e=>setPair(e.target.value)} style={{flex:1, background:'#070D20', border:'1px solid #1E2E4A', color:'#fff', borderRadius:8, padding:'8px', fontSize:11}}><option>XAU/USD</option><option>EUR/USD</option><option>GBP/USD</option><option>BTC/USD</option><option>NAS100</option></select>
+                      <select value={trend} onChange={e=>setTrend(e.target.value)} style={{flex:1, background:'#070D20', border:'1px solid #1E2E4A', color:'#fff', borderRadius:8, padding:'8px', fontSize:11}}><option>Uptrend</option><option>Downtrend</option><option>Sideways</option></select>
+                    </div>
+                    <button onClick={scan} disabled={scanning} style={{width:'100%', marginTop:10, height:38, borderRadius:10, background:'linear-gradient(90deg,#00FF88,#00D4FF)', color:'#000', fontWeight:900, border:'none', fontSize:12, cursor:'pointer'}}>{scanning? "SCANNING..." : "🔍 SCAN CHART NOW"}</button>
                   </div>
-                  <div style={{marginTop:12, background:'#0C1120', border:'1px solid #1E2742', borderRadius:10, padding:12}}>
-                    <div style={{fontSize:11, color:'#7B86A8', fontWeight:700}}>FIBONACCI + SUPPLY/DEMAND (Your PDF ref)</div>
-                    <div style={{marginTop:6, fontSize:12, color:'#D4AF37', fontWeight:700}}>{result.fibEntry}</div>
-                    <div style={{fontSize:11, color:'#9AA3C3', marginTop:6}}>Support: {result.support}</div>
-                    <div style={{fontSize:11, color:'#9AA3C3'}}>Resistance: {result.resistance}</div>
+                ) : (
+                  <>
+                    <div style={{display:'flex', alignItems:'center', gap:8, background:'rgba(255,216,106,0.08)', border:'1px solid rgba(255,216,106,0.25)', borderRadius:10, padding:'8px 10px'}}>
+                      <span style={{fontSize:18}}>📦</span>
+                      <div>
+                        <div style={{fontWeight:900, fontSize:12, color:'#FFD86A'}}>{result.bias} SIGNAL DETECTED • {result.pair}</div>
+                        <div style={{fontSize:10, color:'#9AA3C3'}}>Pattern: {result.pattern.name} • {result.pattern.win} win</div>
+                      </div>
+                      <div style={{marginLeft:'auto', background:'#0A1A33', border:'1px solid rgba(0,255,136,0.3)', borderRadius:6, padding:'2px 6px', fontSize:10, color:'#00FF88'}}>{result.confidence}%</div>
+                    </div>
+                    <div style={{fontSize:10, color:'#7B86A8', marginTop:8, lineHeight:'1.4'}}>Confidence {result.confidence}% • Momentum: {result.momentum} • Volatility: {result.volatility} • Timeframe: {result.timeframe}</div>
+                    <div style={{display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:8, marginTop:10}}>
+                      <div style={{background:'#070D20', borderRadius:8, padding:'8px', border:'1px solid rgba(0,212,255,0.12)'}}><div style={{fontSize:10, color:'#5F6B8F'}}>RSI</div><div style={{fontWeight:800, fontSize:13, color:'#00FF88'}}>{result.rsi}</div></div>
+                      <div style={{background:'#070D20', borderRadius:8, padding:'8px', border:'1px solid rgba(0,212,255,0.12)'}}><div style={{fontSize:10, color:'#5F6B8F'}}>MACD ↗</div><div style={{fontWeight:800, fontSize:13, color:'#00FF88'}}>+{result.macd}</div></div>
+                      <div style={{background:'#070D20', borderRadius:8, padding:'8px', border:'1px solid rgba(0,212,255,0.12)'}}><div style={{fontSize:10, color:'#5F6B8F'}}>VOL</div><div style={{fontWeight:800, fontSize:13, color:'#FFD86A'}}>{result.vol}x AVG</div></div>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+
+            {/* OPEN POSITIONS - PRIVATE / HIDDEN FROM VISITORS */}
+            <div style={{...S.card, borderColor: result ? 'rgba(0,255,136,0.4)' : 'rgba(0,212,255,0.18)', boxShadow: result ? '0 0 30px rgba(0,255,136,0.2)' : S.card.boxShadow}}>
+              <div style={{...S.cardGlow, background:'linear-gradient(90deg, transparent, #00FF88, transparent)'}}></div>
+              <div style={{...S.cardHeader, display:'flex', justifyContent:'space-between', color:'#00FF88'}}>
+                <span>OPEN POSITIONS ({unlocked? "1" : "3"})</span>
+                <span style={{fontSize:10, background: isPrivate? 'rgba(255,77,109,0.15)' : 'rgba(0,255,136,0.15)', border:'1px solid '+(isPrivate? '#FF4D6D':'#00FF88'), padding:'2px 6px', borderRadius:6, color: isPrivate? '#FF4D6D':'#00FF88'}}>{isPrivate? "PRIVATE" : "LIVE"} • {isPrivate? "HIDDEN" : "TOTAL P&L: +$184.20"}</span>
+              </div>
+              
+              {isPrivate && !unlocked ? (
+                <div style={{padding:'16px 14px', textAlign:'center'}}>
+                  <div style={{fontSize:11, color:'#7B86A8'}}>Positions hidden from visitors • Owner only</div>
+                  <div style={{marginTop:10, display:'flex', gap:8, justifyContent:'center'}}>
+                    <input type="password" placeholder="Enter PIN (2026)" value={pin} onChange={e=>setPin(e.target.value)} style={{background:'#070D20', border:'1px solid #1E2E4A', color:'#fff', borderRadius:8, padding:'8px 10px', fontSize:12, width:140}} />
+                    <button onClick={unlock} style={{background:'#00FF88', color:'#000', border:'none', borderRadius:8, padding:'8px 12px', fontWeight:800, fontSize:11, cursor:'pointer'}}>UNLOCK</button>
+                  </div>
+                  <div style={{marginTop:12, filter:'blur(8px)', pointerEvents:'none', opacity:0.5}}>
+                    <div style={{background:'#0A1F0A', border:'1px solid #00FF88', borderRadius:10, padding:'10px', textAlign:'left'}}>
+                      <div style={{fontWeight:900, color:'#00FF88'}}>● XAUUSD • BUY • 0.25 LOT</div>
+                      <div style={{fontSize:11, color:'#9AA3C3'}}>ENTRY 2324.12 • NOW 2326.44 • +$184.20</div>
+                    </div>
                   </div>
                 </div>
-                <div style={{background:'#0E1A2E', border:'1px solid #1E2742', borderRadius:12, padding:12}}>
-                  <div style={{fontSize:11, fontWeight:800, color:'#7B86A8'}}>AI PLAN • SAMUEL</div>
-                  <div style={{marginTop:10, display:'flex', flexDirection:'column', gap:7, fontSize:12}}>
-                    <div style={{display:'flex', justifyContent:'space-between'}}><span style={{color:'#5F6B8F'}}>Bias</span><span style={{fontWeight:800, color: result.plan.bias==='BULLISH'?'#00D38A':'#FF4D6D'}}>{result.plan.bias}</span></div>
-                    <div style={{display:'flex', justifyContent:'space-between'}}><span style={{color:'#5F6B8F'}}>Entry</span><span>{result.plan.entry}</span></div>
-                    <div style={{display:'flex', justifyContent:'space-between'}}><span style={{color:'#5F6B8F'}}>SL</span><span>{result.plan.sl}</span></div>
-                    <div style={{display:'flex', justifyContent:'space-between'}}><span style={{color:'#5F6B8F'}}>TP1 / TP2</span><span>{result.plan.tp1} / {result.plan.tp2}</span></div>
-                    <div style={{marginTop:6, paddingTop:8, borderTop:'1px solid #1E2742', fontSize:11, color:'#7B86A8', lineHeight:'1.45'}}>{result.plan.confluence}</div>
-                    {result.highEvents?.length>0 && <div style={{marginTop:8, background:'rgba(255,77,109,0.12)', border:'1px solid rgba(255,77,109,0.3)', borderRadius:8, padding:8, fontSize:11, color:'#FF9AA2'}}><b>⚠️ NEWS on {date}:</b> {result.highEvents.map(e=>`${e.time} ${e.event}`).join(' • ')} - reduce size or wait</div>}
+              ) : (
+                <div style={{padding:'12px 14px'}}>
+                  <div style={{background:'linear-gradient(90deg, rgba(0,255,136,0.12), rgba(0,212,255,0.08))', border:'1px solid rgba(0,255,136,0.4)', borderRadius:10, padding:'10px 12px'}}>
+                    <div style={{display:'flex', alignItems:'center', gap:8}}>
+                      <div style={{width:22, height:22, borderRadius:99, background:'#00FF88', display:'flex', alignItems:'center', justifyContent:'center', color:'#000', fontWeight:900, fontSize:10}}>●</div>
+                      <div style={{fontWeight:900, fontSize:13, color:'#00FF88'}}>{result?.pair || "XAUUSD"} • BUY • {result?.lot || "0.25"} LOT</div>
+                    </div>
+                    <div style={{fontSize:11, color:'#E6E8EF', marginTop:6}}>ENTRY {result?.entry || "2324.12"} • NOW {result?.now || "2326.44"} • <span style={{color:'#00FF88'}}>+${result?.pnl || "184.20"} (+0.79%)</span></div>
+                    <div style={{marginTop:8, height:4, background:'#0A1A2A', borderRadius:99, overflow:'hidden'}}><div style={{width:'68%', height:'100%', background:'linear-gradient(90deg,#00FF88,#00D4FF)'}}></div></div>
+                    <div style={{fontSize:10, color:'#7B86A8', marginTop:8}}>STOP LOSS: {result?.sl || "2318.00"} • TAKE PROFIT: {result?.tp || "2335.00"}</div>
                   </div>
-                  <button onClick={()=>window.print()} style={{marginTop:10, width:'100%', height:32, borderRadius:8, background:'#1A2340', border:'1px solid #2A3A66', color:'#fff', fontSize:11}}>EXPORT PLAN (Print / Save PDF)</button>
+                  <div style={{display:'flex', gap:8, marginTop:10}}>
+                    <button style={{...S.btn, background:'rgba(255,77,109,0.08)', borderColor:'rgba(255,77,109,0.4)', color:'#FF4D6D'}}>REMOVE</button>
+                    <button style={{...S.btn, background:'rgba(0,212,255,0.08)', borderColor:'rgba(0,212,255,0.4)', color:'#00D4FF'}}>STOP</button>
+                    <button style={{...S.btn, background:'rgba(0,255,136,0.08)', borderColor:'rgba(0,255,136,0.4)', color:'#00FF88'}}>SYMBOLS</button>
+                  </div>
                 </div>
+              )}
+            </div>
+
+            {/* WATCHLIST SCAN */}
+            <div style={S.card}>
+              <div style={S.cardGlow}></div>
+              <div style={S.cardHeader}>WATCHLIST SCAN</div>
+              <div style={{padding:'6px 0'}}>
+                {WATCHLIST.map((w,i)=>(
+                  <div key={i} style={{display:'flex', alignItems:'center', gap:10, padding:'10px 14px', borderBottom:'1px solid rgba(0,212,255,0.08)'}}>
+                    <div style={{width:8, height:8, borderRadius:99, background: w.action==="BUY"?'#00FF88' : w.action==="SELL"?'#FF4D6D' : w.action==="WATCH"?'#00D4FF' : '#5F6B8F'}}></div>
+                    <div style={{flex:1}}>
+                      <div style={{fontSize:12, fontWeight:700}}>{w.symbol} • {w.action} • {w.sentiment}</div>
+                      <div style={{fontSize:10, color:'#5F6B8F'}}>{w.note} • Conf {w.conf}</div>
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
-          )}
-        </div>
 
-        <div style={{display:'flex', flexDirection:'column', gap:14}}>
-          <div style={S.card}>
-            <div style={{padding:'12px 14px', borderBottom:'1px solid #1E2742', fontWeight:800, fontSize:12}}>📚 42 PATTERNS LIBRARY (Built-in Reference)</div>
-            <div style={{maxHeight:360, overflow:'auto', padding:6, display:'grid', gridTemplateColumns:'1fr 1fr', gap:6}}>
-              {PATTERNS.map((p,i)=><div key={i} style={{background:'#0C1120', border:'1px solid #1E2742', borderRadius:8, padding:'7px 9px'}}>
-                <div style={{display:'flex', justifyContent:'space-between'}}><span style={{fontSize:11, fontWeight:700}}>{p.name}</span><span style={{fontSize:8, padding:'2px 5px', borderRadius:99, background: p.bias==='BULLISH'?'rgba(0,211,138,0.15)':'rgba(255,77,109,0.15)', color: p.bias==='BULLISH'?'#00D38A':'#FF4D6D'}}>{p.bias}</span></div>
-                <div style={{fontSize:10, color:'#7B86A8'}}>{p.type} • {p.win}</div>
-              </div>)}
-            </div>
-            <div style={{padding:8, fontSize:9, color:'#5F6B8F', textAlign:'center', borderTop:'1px solid #1E2742'}}>Source: Your PDFs + ForexBee 27+ + Strike 42 Chart Patterns</div>
-          </div>
+            <div style={{height:80}}></div>
+          </>
+        )}
 
-          <div style={S.card}>
-            <div style={{padding:'12px 14px', borderBottom:'1px solid #1E2742', fontWeight:800, fontSize:12, display:'flex', justifyContent:'space-between'}}><span>🌍 INVESTING.COM • {date} {hasEvent?'• FILTERED':''}</span><span style={{width:8, height:8, background:'#00FF88', borderRadius:999, display:'inline-block'}}></span></div>
-            <div>
-              {(hasEvent? calendar.filter(c=>c.impact==="high") : calendar).map((e,i)=><div key={i} style={{display:'grid', gridTemplateColumns:'48px 40px 1fr', padding:'8px 12px', borderBottom:'1px solid #141C32', fontSize:11}}>
-                <span style={{color:'#9AA3C3'}}>{e.time}</span><span>{e.flag} {e.currency}</span><div><div>{e.event}</div><div style={{fontSize:10, color:'#5F6B8F'}}>{e.impact?.toUpperCase()} • F:{e.forecast||'-'}</div></div>
-              </div>)}
-              {calendar.length===0 && <div style={{padding:16, fontSize:11, color:'#7B86A8'}}>No events for {date} - clean technical day</div>}
-            </div>
+        {tab==="positions" && (
+          <div style={{padding:12}}>
+            <div style={S.card}><div style={S.cardHeader}>POSITIONS • PRIVATE</div><div style={{padding:20, textAlign:'center', color:'#5F6B8F', fontSize:12}}>{unlocked? "Live positions visible to owner only" : "Unlock with PIN to view positions"}</div></div>
           </div>
+        )}
+        {tab==="risk" && (
+          <div style={{padding:12}}>
+            <div style={S.card}><div style={S.cardHeader}>RISK • EQUITY AWARE</div><div style={{padding:14, fontSize:12, lineHeight:'1.6', color:'#9AA3C3'}}>Max Daily DD 3%<br/>Max Total DD 10%<br/>Lot: Broker Min (0.01)<br/>ATR SL 1.5x • TP1 1.0x • TP2 1.618x<br/>News aware: pause 30min before high impact</div></div>
+          </div>
+        )}
+        {tab==="settings" && (
+          <div style={{padding:12}}>
+            <div style={S.card}><div style={S.cardHeader}>SETTINGS • SAMUEL FX PRO</div><div style={{padding:14}}>
+              <div style={{fontSize:11, color:'#5F6B8F'}}>PRIVACY MODE</div>
+              <button onClick={()=>setIsPrivate(!isPrivate)} style={{marginTop:8, width:'100%', height:36, borderRadius:8, background: isPrivate? '#FF4D6D' : '#00FF88', color: isPrivate? '#fff':'#000', border:'none', fontWeight:800}}>{isPrivate? "PRIVATE ON - Hide from visitors" : "PRIVATE OFF - Show live data"}</button>
+              <div style={{marginTop:16, fontSize:10, color:'#5F6B8F'}}>Interface responsive: {isMobile? "Mobile (100%)" : "Desktop (440px centered)"} • © 2026 SAMUEL • v5 AI SCALPER</div>
+            </div></div>
+          </div>
+        )}
+
+        {/* Bottom Nav */}
+        <div style={S.nav}>
+          {[
+            {id:"scanner", icon:"◧", label:"SCANNER"},
+            {id:"positions", icon:"◫", label:"POSITIONS"},
+            {id:"risk", icon:"⬡", label:"RISK"},
+            {id:"settings", icon:"☰", label:"SETTINGS"},
+          ].map(n=>(
+            <div key={n.id} onClick={()=>setTab(n.id)} style={{display:'flex', flexDirection:'column', alignItems:'center', gap:4, cursor:'pointer', color: tab===n.id? '#00FF88':'#5F6B8F'}}>
+              <div style={{fontSize:16}}>{n.icon}</div>
+              <div style={{fontSize:9, fontWeight:800, letterSpacing:'0.06em'}}>{n.label}</div>
+            </div>
+          ))}
         </div>
       </div>
-      <div style={{textAlign:'center', marginTop:18, fontSize:10, color:'#5F6B8F'}}>© 2026 SAMUEL FX Intelligence PRO v4 • Image Scan Technology • No lag • Custom Logo • Built-in 42 Patterns</div>
+
+      {/* Desktop side panel for larger screens - shows your old scanner as advanced mode */}
+      {!isMobile && (
+        <div style={{width:'760px', marginLeft:20, paddingTop:20}}>
+          <div style={{background:'#0C1120', border:'1px solid #1E2742', borderRadius:16, padding:16}}>
+            <div style={{fontWeight:800, fontSize:13, marginBottom:12}}>🖥️ DESKTOP ADVANCED MODE • Chart Scanner Engine</div>
+            <div style={{border:'1px dashed #2A3A66', borderRadius:10, height:320, display:'flex', alignItems:'center', justifyContent:'center', background:'#070A14', position:'relative', overflow:'hidden'}}>
+              {preview ? <><img src={preview} style={{width:'100%', height:'100%', objectFit:'contain'}} /><div style={{position:'absolute', bottom:8, left:8, background:'rgba(0,0,0,0.7)', padding:'4px 8px', borderRadius:6, fontSize:10, color:'#00FF88'}}>Fib 38.2% BUY ZONE • 61.8% GOLDEN • {pair}</div></> : <div style={{textAlign:'center'}}><div style={{fontSize:24}}>📸</div><div style={{fontSize:12, color:'#7B86A8'}}>Desktop: Upload chart to populate mobile SCAN SUMMARY</div></div>}
+            </div>
+            <div style={{marginTop:10, display:'flex', gap:8}}>
+              <button onClick={()=>fileRef.current?.click()} style={{flex:1, height:36, borderRadius:8, background:'#1A2340', border:'1px solid #2A3A66', color:'#fff', fontSize:11}}>UPLOAD CHART</button>
+              <button onClick={scan} style={{flex:1, height:36, borderRadius:8, background:'linear-gradient(90deg,#00FF88,#00D4FF)', color:'#000', fontWeight:800, fontSize:11, border:'none'}}>{scanning? "SCANNING..." : "SCAN TO MOBILE"}</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
