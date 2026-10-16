@@ -15,8 +15,9 @@ function genKey(){
   return `SAMUEL-${q()}-${q()}-${q()}`
 }
 
-const MENTOR_EMAIL="vulturesonkidd@gmail.com"
-const MENTOR_PIN="6084549888"
+// TASK 1 SECURITY: MENTOR_EMAIL and MENTOR_PIN removed from frontend
+// Now stored in backend .env and checked via /api/auth
+// No secrets visible in View Source
 
 const nowSAST = () => new Date().toLocaleTimeString('en-ZA', {timeZone:'Africa/Johannesburg', hour12:false}) + ' SAST'
 const todaySA = () => new Date().toLocaleDateString('en-CA', {timeZone:'Africa/Johannesburg'})
@@ -102,7 +103,17 @@ export default function App(){
   useEffect(()=>{ if(auth) localStorage.setItem('samuel_auth_v9', JSON.stringify(auth)); else localStorage.removeItem('samuel_auth_v9'); },[auth])
   useEffect(()=>{ localStorage.setItem('fx_positions_24h', JSON.stringify(openPositions)) },[openPositions])
   // FIX: Only create owner key if licences empty, but NEVER auto-login - auth stays null
-  useEffect(()=>{ if(licences.length===0){ const k=genKey(); setLicences([{key:k,email:MENTOR_EMAIL,plan:"OWNER - Lifetime",created:todaySA(),expiry:"Lifetime",status:"Active",isOwner:true}]) } },[])
+  useEffect(()=>{ if(licences.length===0){ 
+    // Fetch owner email from secure backend, not hardcoded
+    fetch("/api/auth").then(r=>r.json()).then(d=>{
+      const ownerEmail = d.ownerEmail || "OWNER";
+      const k=genKey(); 
+      setLicences([{key:k,email:ownerEmail,plan:"OWNER - Lifetime",created:todaySA(),expiry:"Lifetime",status:"Active",isOwner:true}]);
+    }).catch(()=>{
+      const k=genKey(); 
+      setLicences([{key:k,email:"OWNER",plan:"OWNER - Lifetime",created:todaySA(),expiry:"Lifetime",status:"Active",isOwner:true}]);
+    });
+  } },[])
 
   useEffect(()=>{
     fetch('/api/vault').then(r=>r.json()).then(d=>{
@@ -214,11 +225,16 @@ export default function App(){
     setScanning(false)
   }
 
-  const loginMentor=()=>{
-    if(pinInput.trim()===MENTOR_PIN){
-      setAuth({email:MENTOR_EMAIL,licence:"OWNER-MASTER-KEY",plan:"OWNER - Lifetime",expiry:"Lifetime",isOwner:true, isMentor:true})
-      setLoginError(""); setTab("scanner")
-    } else { setLoginError("Invalid PIN") }
+  const loginMentor=async()=>{
+    if(!pinInput.trim()){ setLoginError("Enter PIN"); return; }
+    try{
+      const r = await fetch("/api/auth",{ method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({type:"mentor", pin: pinInput.trim()}) });
+      const d = await r.json();
+      if(d.valid){
+        setAuth({email:d.email, licence:"OWNER-MASTER-KEY", plan:d.plan, expiry:d.expiry, isOwner:true, isMentor:true});
+        setLoginError(""); setTab("scanner");
+      } else { setLoginError(d.error||"Invalid PIN"); }
+    }catch(e){ setLoginError("Auth API offline - check /api/auth"); }
   }
 
   const loginClient=async()=>{
