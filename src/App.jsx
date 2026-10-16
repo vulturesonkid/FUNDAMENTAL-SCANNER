@@ -22,7 +22,7 @@ const nowSAST = () => new Date().toLocaleTimeString('en-ZA', {timeZone:'Africa/J
 const todaySA = () => new Date().toLocaleDateString('en-CA', {timeZone:'Africa/Johannesburg'})
 
 const FIXES = [
-  { v:"v10.0", date:"2026-10-16", title:"REAL DATA - No Mock + UI Fixed", desc:"Uses live ForexFactory calendar via Faireconomy + real price from TwelveData/Finnhub. News reasoning uses real forecast/previous. Blank page fixed." },
+  { v:"v10.0", date:"2026-10-16", title:"REAL DATA - No Mock + UI Fixed + LOGIN PRESERVED", desc:"Uses live ForexFactory calendar via Faireconomy + real price from TwelveData/Finnhub. News reasoning uses real forecast/previous. Login forced on new devices - not removed." },
   { v:"v9.2", date:"2026-09-28", title:"Email hardcoded + Delete authority + SAST", desc:"Key bound to email at creation like mentor PIN. Admin can DELETE key, client gets Invalid key - revoked. SAST GMT+2. Vault sync phone+PC." },
   { v:"v9.1", date:"2026-09-28", title:"Anti-Repaint + Vault Sync + True Price", desc:"Fixed repaint: same chart hash = same signal 24h. Fixed phone login: keys trim+uppercase+server vault sync. Fixed Entry/SL/TP: now reads true price via /api/vision, if blurry returns CANNOT_FETCH. HOLD positions kept 24h." },
   { v:"v9.0", date:"2026-09-27", title:"News + Chart Fusion", desc:"Re-added investing.com calendar with NFP/CPI/FOMC prediction probability." },
@@ -86,7 +86,8 @@ export default function App(){
   const [newsAnalysis,setNewsAnalysis]=useState(null)
   const fileRef=useRef(null)
   const rawFileRef=useRef(null)
-  const [auth,setAuth]=useState(()=>{ try{ return JSON.parse(localStorage.getItem('samuel_auth_v9')||'null')}catch{return null} })
+  // FIX: Force login on new device - if no auth in storage, auth = null -> login screen shows
+  const [auth,setAuth]=useState(()=>{ try{ const saved = localStorage.getItem('samuel_auth_v9'); return saved ? JSON.parse(saved) : null }catch{return null} })
   const [emailInput,setEmailInput]=useState("")
   const [licInput,setLicInput]=useState("")
   const [pinInput,setPinInput]=useState("")
@@ -98,8 +99,9 @@ export default function App(){
 
   useEffect(()=>{ localStorage.setItem('samuel_licences_v9', JSON.stringify(licences)) },[licences])
   useEffect(()=>{ localStorage.setItem('samuel_deleted_v9', JSON.stringify(deletedKeys)) },[deletedKeys])
-  useEffect(()=>{ if(auth) localStorage.setItem('samuel_auth_v9', JSON.stringify(auth)) },[auth])
+  useEffect(()=>{ if(auth) localStorage.setItem('samuel_auth_v9', JSON.stringify(auth)); else localStorage.removeItem('samuel_auth_v9'); },[auth])
   useEffect(()=>{ localStorage.setItem('fx_positions_24h', JSON.stringify(openPositions)) },[openPositions])
+  // FIX: Only create owner key if licences empty, but NEVER auto-login - auth stays null
   useEffect(()=>{ if(licences.length===0){ const k=genKey(); setLicences([{key:k,email:MENTOR_EMAIL,plan:"OWNER - Lifetime",created:todaySA(),expiry:"Lifetime",status:"Active",isOwner:true}]) } },[])
 
   useEffect(()=>{
@@ -139,7 +141,7 @@ export default function App(){
 
   const scan=async()=>{
     if(!preview){ fileRef.current?.click(); return }
-    if(!auth){ setLoginError("Login required"); setTab("settings"); return }
+    if(!auth){ setLoginError("Login required - please enter Email + Licence Key"); return }
     const f = rawFileRef.current;
     const fileHash = f? `${f.name}_${f.size}_${f.lastModified}` : `${pair}_${date}`;
     const cached = localStorage.getItem('scan_'+fileHash);
@@ -268,12 +270,13 @@ export default function App(){
     nav:{position:'fixed',bottom:0,left:'50%',transform:'translateX(-50%)',width:'100%',maxWidth:'480px',background:'#070D20',borderTop:'1px solid rgba(0,212,255,0.12)',display:'flex',justifyContent:'space-around',padding:'8px 0 14px',zIndex:30},
   }
 
+  // LOGIN SCREEN - PRESERVED - Shows on new device when auth is null
   if(!auth){
     return (
       <div style={{...S.page,alignItems:'center',padding:'20px'}}>
         <div style={{...S.phone,padding:'20px',minHeight:'auto'}}>
           <h2 style={{textAlign:'center'}}>SAMUEL FX Intelligence PRO</h2>
-          <p style={{textAlign:'center',fontSize:12,color:'#7B9ED9'}}>Login Required</p>
+          <p style={{textAlign:'center',fontSize:12,color:'#7B9ED9'}}>Login Required - Real Data Mode</p>
           <div style={{marginTop:20}}>
             <input style={S.input} placeholder="Email" value={emailInput} onChange={e=>setEmailInput(e.target.value)} />
             <input style={{...S.input,marginTop:10}} placeholder="Licence Key (SAMUEL-XXXX-XXXX-XXXX)" value={licInput} onChange={e=>setLicInput(e.target.value)} />
@@ -283,6 +286,7 @@ export default function App(){
               <button onClick={loginMentor} style={{...S.input,marginTop:10,background:'#1A2A4A',cursor:'pointer'}}>Mentor Login</button>
             </div>
             {loginError && <div style={{color:'#FF4444',marginTop:10,fontSize:12}}>{loginError}</div>}
+            <div style={{marginTop:20,fontSize:9,color:'#5A7AB5',textAlign:'center'}}>Real calendar: investing.com + ForexFactory via Faireconomy<br/>Real price: TwelveData/Finnhub</div>
           </div>
         </div>
       </div>
@@ -358,7 +362,7 @@ export default function App(){
                 {openPositions.length===0 ? <div style={{fontSize:11,color:'#7B9ED9'}}>No positions - scan a chart</div> :
                   openPositions.map(p=>(
                     <div key={p.id} style={{fontSize:11,padding:'6px 0',borderBottom:'1px solid rgba(255,255,255,0.05)',display:'flex',justifyContent:'space-between'}}>
-                      <span>{p.symbol} {p.side}</span><span>{p.entry} → {p.tp}</span><span style={{color:p.pnl.startsWith('+')?'#00FF88':'#FF4444'}}>{p.pnl}</span>
+                     <span>{p.symbol} {p.side}</span><span>{p.entry} → {p.tp}</span><span style={{color:p.pnl.startsWith('+')?'#00FF88':'#FF4444'}}>{p.pnl}</span>
                     </div>
                   ))
                 }
@@ -369,7 +373,7 @@ export default function App(){
 
         {tab==="info" && (
           <div style={S.card}>
-            <div style={S.cardH}>Fixes Log - v10.0 Real Data</div>
+            <div style={S.cardH}>Fixes Log - v10.0 Real Data + Login Preserved</div>
             <div style={{padding:10}}>
               {FIXES.map((f,i)=>(
                 <div key={i} style={{marginBottom:10,fontSize:11}}>
